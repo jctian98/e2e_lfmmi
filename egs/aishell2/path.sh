@@ -1,0 +1,1 @@
+../aishell1/path.sh
