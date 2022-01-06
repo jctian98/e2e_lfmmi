@@ -27,7 +27,6 @@ Currently we have released examples on Aishell-1 and Aishell-2 datasets.
 
 With MMI training & decoding methods and the word-level N-gram LM. We achieve results on Aishell-1 and Aishell-2 as below. All results are in CER%
 
-|  Test set                      | dev | test | ios | android | mic |  
 |  Test set                      | Aishell-1-dev | Aishell-1-test | Aishell-2-ios | Aishell-2-android | Aishell-2-mic |  
 |  :----                         | :-: | :--: | :-: | :-----: | :-: |
 | AED                            | 4.73| 5.32  | 5.73| 6.56    | 6.53| 
