@@ -139,7 +139,7 @@ class MMIRNNTScorer():
         num_graphs, _ = self.graph_compiler.compile(texts, self.P, replicate_den=False)
 
         # (3) intersection
-        lookahead_range = (0, 25) # tunable paramter. avoid this hard code in the future
+        lookahead_range = (0, 10) # tunable paramter. avoid this hard code in the future
         tot_scores_collection = []
         T = nnet_output.size()[1]
         for s in range(lookahead_range[0], lookahead_range[1] + 1): # be symmetric

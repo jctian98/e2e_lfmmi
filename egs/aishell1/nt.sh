@@ -59,6 +59,7 @@ aux_mmi=true
 aux_mmi_weight=0.5
 aux_mmi_dropout_rate=0.1
 aux_mmi_type='mmi' # mmi or phonectc
+att_scorer_weight=0.0
 
 # MBR training config
 aux_mbr=false
@@ -110,6 +111,7 @@ train_opts=\
 --aux-mmi-weight $aux_mmi_weight \
 --aux-mmi-dropout-rate $aux_mmi_dropout_rate \
 --aux-mmi-type $aux_mmi_type \
+--att-scorer-weight $att_scorer_weight \
 "
 
 if [ $aux_mbr == true ]; then

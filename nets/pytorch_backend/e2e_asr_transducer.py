@@ -26,6 +26,7 @@ from espnet.nets.pytorch_backend.transducer.arguments import (
     add_custom_training_arguments,  # noqa: H301
     add_transducer_arguments,  # noqa: H301
     add_auxiliary_task_arguments,  # noqa: H301
+    add_att_scorer_arguments,
 )
 from espnet.nets.pytorch_backend.transducer.auxiliary_task import AuxiliaryTask
 from espnet.nets.pytorch_backend.transducer.custom_decoder import CustomDecoder
@@ -51,6 +52,11 @@ from espnet.utils.fill_missing_args import fill_missing_args
 from espnet.snowfall.warpper.warpper_mmi import K2MMI
 from espnet.snowfall.warpper.warpper_ctc import K2CTC
 from espnet.nets.beam_search_transducer import BeamSearchTransducer
+from espnet.nets.pytorch_backend.transformer.decoder import Decoder
+from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import (
+    LabelSmoothingLoss,  # noqa: H301
+)
+
 import editdistance
 
 class Reporter(chainer.Chain):
@@ -66,6 +72,7 @@ class Reporter(chainer.Chain):
         loss_aux_symm_kl,
         loss_mbr,
         loss_mmi,
+        loss_att,
         cer,
         wer,
     ):
@@ -77,7 +84,8 @@ class Reporter(chainer.Chain):
         chainer.reporter.report({"loss_aux_trans": loss_aux_trans}, self)
         chainer.reporter.report({"loss_aux_symm_kl": loss_aux_symm_kl}, self)
         chainer.reporter.report({"loss_mbr": loss_mbr}, self)
-        chainer.reporter.report({"loss_mbr": loss_mmi}, self)
+        chainer.reporter.report({"loss_mmi": loss_mmi}, self)
+        chainer.reporter.report({"loss_att": loss_att}, self)
         chainer.reporter.report({"cer": cer}, self)
         chainer.reporter.report({"wer": wer}, self)
 
@@ -110,6 +118,16 @@ class E2E(ASRInterface, torch.nn.Module):
         E2E.training_add_custom_arguments(parser)
         E2E.transducer_add_arguments(parser)
         E2E.auxiliary_task_add_arguments(parser)
+
+        E2E.att_scorer_arguments(parser)
+        return parser
+
+    @staticmethod
+    def att_scorer_arguments(parser):
+        """Add attention scorer argument."""
+        group = parser.add_argument_group("Attention scorer arguments")
+        group = add_att_scorer_arguments(group)
+
         return parser
 
     @staticmethod
@@ -224,6 +242,9 @@ class E2E(ASRInterface, torch.nn.Module):
         self.aux_mbr_weight = args.aux_mbr_weight
         self.aux_mbr_beam = args.aux_mbr_beam
 
+        self.use_att_scorer = args.att_scorer_weight > 0.0
+        self.att_scorer_weight = args.att_scorer_weight
+
         if self.use_aux_task:
             n_layers = (
                 (len(args.enc_block_arch) * args.enc_block_repeat - 1)
@@ -311,6 +332,33 @@ class E2E(ASRInterface, torch.nn.Module):
         self.joint_network = JointNetwork(
             odim, encoder_out, decoder_out, args.joint_dim, args.joint_activation_type
         )
+
+        # Attention Rescore
+        if self.use_att_scorer > 0.0:
+            self.att_scorer = Decoder(
+                odim=odim,
+                selfattention_layer_type=args.att_decoder_selfattn_layer_type,
+                attention_dim=args.att_adim,
+                attention_heads=args.att_aheads,
+                conv_wshare=args.att_wshare,
+                conv_kernel_length=args.att_ldconv_decoder_kernel_length,
+                conv_usebias=args.att_ldconv_usebias,
+                linear_units=args.att_dunits,
+                num_blocks=args.att_dlayers,
+                dropout_rate=args.att_dropout_rate,
+                positional_dropout_rate=args.att_dropout_rate,
+                self_attention_dropout_rate=args.att_attn_dropout_rate,
+                src_attention_dropout_rate=args.att_attn_dropout_rate,
+            )
+            self.att_scorer_criterion = LabelSmoothingLoss(
+                odim,
+                ignore_id,
+                args.lsm_weight,
+                args.att_length_normalized_loss,
+            )
+        else:
+            self.attention_scorer = None
+            self.att_scorer_criterion = None
 
         if hasattr(self, "most_dom_list"):
             self.most_dom_dim = sorted(
@@ -496,17 +544,17 @@ class E2E(ASRInterface, torch.nn.Module):
 
         if self.use_aux_ctc or self.use_aux_mmi:
             if "custom" in self.etype:
-                hs_mask = torch.IntTensor(
+                hlen = torch.IntTensor(
                     [h.size(1) for h in hs_mask],
                 ).to(hs_mask.device)
 
         if self.use_aux_ctc:
-            loss_ctc = self.aux_ctc_weight * self.aux_ctc(hs_pad, hs_mask, ys_pad, texts)
+            loss_ctc = self.aux_ctc_weight * self.aux_ctc(hs_pad, hlen, ys_pad, texts)
         else:
             loss_ctc = 0.0
 
         if self.use_aux_mmi:
-            loss_mmi = self.aux_mmi_weight * self.aux_mmi(hs_pad, hs_mask, ys_pad, texts)
+            loss_mmi = self.aux_mmi_weight * self.aux_mmi(hs_pad, hlen, ys_pad, texts)
         else:
             loss_mmi = 0.0
 
@@ -517,6 +565,14 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             loss_lm = 0.0
 
+        if self.use_att_scorer:
+            ys_mask = target_mask(ys_in_pad, self.ignore_id)
+            pred_pad, _ = self.att_scorer(ys_in_pad, ys_mask, hs_pad, hs_mask)
+            loss_att = self.att_scorer_criterion(pred_pad, ys_out_pad)
+            loss_att *= self.att_scorer_weight
+        else:
+            loss_att = 0.0
+
         loss = (
             loss_trans
             + self.transducer_weight * (loss_aux_trans + loss_aux_symm_kl)
@@ -524,6 +580,7 @@ class E2E(ASRInterface, torch.nn.Module):
             + loss_mmi
             + loss_lm
             + loss_mbr
+            + loss_att
         )
 
         self.loss = loss
@@ -545,6 +602,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 float(loss_aux_symm_kl),
                 float(loss_mbr),
                 float(loss_mmi),
+                float(loss_att),
                 cer,
                 wer,
             )

@@ -171,7 +171,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     fi
 
     for rtask in ${recog_set}; do
-        decode_dir=decode_${rtask}_ctc${ctc_weight}_mmi${mmi_weight}_${ngram_order}ngram${ngram_weight}_${word_ngram_order}wngram${word_ngram_weight}_log${word_ngram_log_semiring}_lm${lm_weight}_speed
+        decode_dir=decode_${rtask}_ctc${ctc_weight}_mmi${mmi_weight}_${ngram_order}ngram${ngram_weight}_${word_ngram_order}wngram${word_ngram_weight}_log${word_ngram_log_semiring}_lm${lm_weight}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data
@@ -179,7 +179,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 
         #### use CPU for decoding
         ngpu=0
-        ${decode_cmd} JOB=1:1 ${expdir}/${decode_dir}/log/decode.JOB.log \
+        ${decode_cmd} JOB=1:$nj ${expdir}/${decode_dir}/log/decode.JOB.log \
             python3 ${MAIN_ROOT}/bin/asr_recog.py \
             --config ${decode_config} \
             --ngpu ${ngpu} \

@@ -130,13 +130,12 @@ def recog_v2(args):
         ctc = None
 
     if args.word_ngram_weight > 0.0:
-        #word_ngram_scorer = WordNgramPartialScorer
-        #print(f"Using word ngram model: {args.word_ngram}", flush=True)
-        #word_ngram_scorer = WordNgramPartialScorer(args.word_ngram,
-        #                      device,
-        #                      train_args.char_list,
-        #                      log_semiring=args.word_ngram_log_semiring)
-        raise NotImplementedError
+        word_ngram_scorer = WordNgramPartialScorer
+        print(f"Using word ngram model: {args.word_ngram}", flush=True)
+        word_ngram_scorer = WordNgramPartialScorer(args.word_ngram, 
+                              device,
+                              train_args.char_list, 
+                              log_semiring=args.word_ngram_log_semiring)
     else:
         word_ngram_scorer = None
         

@@ -858,6 +858,8 @@ def train(args):
                     "validation/main/loss_mbr",
                     "main/loss_mmi",
                     "validation/main/loss_mmi",
+                    "main/loss_att",
+                    "validation/main/loss_att",
                 ],
                 "epoch",
                 file_name="loss.png",
@@ -983,6 +985,7 @@ def train(args):
             "main/loss_aux_symm_kl",
             "main/loss_mbr",
             "main/loss_mmi",
+            "main/loss_att",
             "validation/main/loss",
             "validation/main/loss_trans",
             "validation/main/loss_ctc",
@@ -991,6 +994,7 @@ def train(args):
             "validation/main/loss_aux_symm_kl",
             "validation/main/loss_mbr",
             "validation/main/loss_mmi",
+            "validation/main/loss_att",
             "elapsed_time",
         ]
     else:
@@ -1198,13 +1202,12 @@ def recog(args):
             ngram_scorer = None
 
         if args.word_ngram is not None and args.word_ngram_weight > 0.0:
-            #from espnet.nets.scorers.word_ngram import WordNgramPartialScorer
-            #word_ngram_scorer = WordNgramPartialScorer
-            #word_ngram_scorer = word_ngram_scorer(
-            #                      args.word_ngram, device, train_args.char_list,
-            #                      log_semiring=args.word_ngram_log_semiring,
-            #                      lower_char=args.word_ngram_lower_char)
-            raise NotImplementedError
+            from espnet.nets.scorers.word_ngram import WordNgramPartialScorer
+            word_ngram_scorer = WordNgramPartialScorer
+            word_ngram_scorer = word_ngram_scorer(
+                                  args.word_ngram, device, train_args.char_list,
+                                  log_semiring=args.word_ngram_log_semiring,
+                                  lower_char=args.word_ngram_lower_char)
         else:
             word_ngram_scorer = None
 

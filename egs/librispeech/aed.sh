@@ -69,9 +69,9 @@ ctc_type=k2mmi # k2ctc builtin
 # decode config
 recog_set="test_clean test_other dev_clean dev_other"
 idx_average=91_100
-lm_weight=0.5
+lm_weight=0.6
 mmi_weight=0.0
-ctc_weight=0.0
+ctc_weight=0.4
 search_type="alsd"
 mmi_type="lookahead"
 beam_size=10
@@ -190,8 +190,8 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --num ${idx_average} \
 
         # download from official repo
-        lang=exp/train_rnnlm/rnnlm.model.best
-        lang_config=exp/train_rnnlm/model.json
+        lang=exp/train_rnnlm_transformer/rnnlm.model.best
+        lang_config=exp/train_rnnlm_transformer/model.json
     fi
 
     pids=() # initialize pids
@@ -209,6 +209,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
+        echo "decode_opts: $decode_opts"
         ${decode_cmd} JOB=1:$nj ${expdir}/${decode_dir}/log/decode.JOB.log \
             asr_recog.py \
             --config ${decode_config} \
@@ -219,7 +220,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results_0/${recog_model}  \
             --rnnlm ${lang} --rnnlm-conf $lang_config \
-            --local-rank JOB $decode_opts -api v2 
+            --local-rank JOB $decode_opts --api v2 
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict} > ${expdir}/${decode_dir}/decode_result.txt
 

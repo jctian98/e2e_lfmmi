@@ -122,7 +122,7 @@ class BeamSearch(torch.nn.Module):
             and self.pre_beam_size < self.n_vocab
             and len(self.part_scorers) > 0
         )
-        print("Do pre-beam: {self.do_pre_beam}")
+        print(f"Do pre-beam: {self.do_pre_beam}")
 
         self.mmi_rescorer = mmi_rescorer
         # score below this would be deleted even it is in beam

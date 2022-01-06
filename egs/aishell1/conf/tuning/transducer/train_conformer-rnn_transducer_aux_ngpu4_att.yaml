@@ -51,3 +51,13 @@ model-module: "espnet.nets.pytorch_backend.e2e_asr_transducer:E2E"
 report-wer: True
 report-cer: True
 
+# Attention scorer auxiliary task: mainly follow the settings in LASCTC decoder
+att-adim: 512
+att-aheads: 8
+att-dlayers: 6
+att-dunits: 2048
+att-dropout-rate: 0.1
+att-attn-dropout-rate: 0.0
+att-length-normalized-loss: false
+lsm-weight: 0.1
+

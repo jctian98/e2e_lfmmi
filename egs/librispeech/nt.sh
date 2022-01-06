@@ -34,10 +34,6 @@ recog_model=model.acc.best  # set a model to be used for decoding: 'model.acc.be
 lang_model=rnnlm.model.best # set a language model to be used for decoding
 
 # model average realted (only for transformer)
-<<<<<<< HEAD
-=======
-n_average=91_100                  # the number of ASR models to be averaged
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
 use_valbest_average=false     # if true, the validation `n_average`-best ASR models will be averaged.
                              # if false, the last `n_average` ASR models will be averaged.
 lm_n_average=0               # the number of languge models to be averaged
@@ -63,13 +59,8 @@ seed=888
 
 # train config
 debug=false
-<<<<<<< HEAD
 batch_size=4
 accum_grad=8
-=======
-batch_size=6
-accum_grad=6
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
 epochs=100
 aux_ctc=true
 aux_ctc_weight=0.5
@@ -80,12 +71,8 @@ aux_mmi_dropout_rate=0.1
 aux_mmi_type='mmi'  # mmi or phonectc
 
 # decode config
-<<<<<<< HEAD
 recog_set="test_clean test_other dev_clean dev_other"
 idx_average=91_100
-=======
-recog_set="test_clean"
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
 lm_weight=0.5
 mmi_weight=0.0
 ctc_weight=0.0
@@ -153,12 +140,7 @@ expdir=exp/${expname}
 mkdir -p ${expdir}
 
 lang=data/lang_phone
-<<<<<<< HEAD
-dict=data/lang_char/train_960_unigram5000_units.txt
-bpemodel=data/lang_char/train_960_unigram5000.model 
-=======
 dict=data/lang_char/train_960_unigram5000_units.txt 
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
 feat_tr_dir=${dumpdir}/${train_sp}/delta${do_delta}; mkdir -p ${feat_tr_dir}
 feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
@@ -202,17 +184,10 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         # Average ASR models
         if ${use_valbest_average}; then
-<<<<<<< HEAD
             recog_model=model.val${idx_average}.avg.best
             opt="--log ${expdir}/results_0/log"
         else
             recog_model=model.last${idx_average}.avg.best
-=======
-            recog_model=model.val${n_average}.avg.best
-            opt="--log ${expdir}/results_0/log"
-        else
-            recog_model=model.last${n_average}.avg.best
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
             opt="--log"
         fi
         average_checkpoints.py \
@@ -220,51 +195,29 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --backend ${backend} \
             --snapshots ${expdir}/results_0/snapshot.ep.* \
             --out ${expdir}/results_0/${recog_model} \
-<<<<<<< HEAD
             --num ${idx_average} \
 
-        # download from official repo: cannot use transformer
-=======
-            --num ${n_average} \
-            --metric 'cer'
-
         # download from official repo
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
-        lang=exp/train_rnnlm/rnnlm.model.best
-        lang_config=exp/train_rnnlm/model.json
+        lang=exp/train_rnnlm_transformer/rnnlm.model.best
+        lang_config=exp/train_rnnlm_transformer/model.json
     fi
 
     pids=() # initialize pids
-<<<<<<< HEAD
-    decode_parent_dir=decode_lm${lm_weight}_${search_type}_mmi${mmi_weight}
     for rtask in ${recog_set}; do
-         
-        decode_dir=$decode_parent_dir/$rtask
+    
+        decode_dir=decode_${rtask}_lm${lm_weight}_${search_type}_mmi${mmi_weight}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data
         # nj=`wc -l ${feat_recog_dir}/feats.scp | awk '{print $1}'`
         nj=188
-=======
-    for rtask in ${recog_set}; do
-    (
-        decode_dir=decode_${rtask}_lm${lm_weight}_${search_type}_mmi${mmi_weight}
-        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-
-        # split data
-        nj=`wc -l ${feat_recog_dir}/feats.scp | awk '{print $1}'`
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
         splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
         #### use CPU for decoding
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
-<<<<<<< HEAD
         ${decode_cmd} JOB=1:$nj ${expdir}/${decode_dir}/log/decode.JOB.log \
-=======
-        ${decode_cmd} JOB=1136:1136 ${expdir}/${decode_dir}/log/decode.JOB.log \
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
             asr_recog.py \
             --config ${decode_config} \
             --ngpu ${ngpu} \
@@ -275,22 +228,13 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --model ${expdir}/results_0/${recog_model}  \
             --rnnlm ${lang} --rnnlm-conf $lang_config \
             --local-rank JOB $decode_opts 
-<<<<<<< HEAD
-        
-        score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel} --wer true \
-          ${expdir}/${decode_dir} ${dict} > ${expdir}/${decode_dir}/decode_result.txt
-        
-    done
-    wait 
-=======
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict} > ${expdir}/${decode_dir}/decode_result.txt
 
-    ) &
+    
     pids+=($!) # store background pids
     done
     i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
     [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
->>>>>>> 02cc2a553b2b1444c58c656af6602d5b82a93a9f
     echo "Finished"
 fi

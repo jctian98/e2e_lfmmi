@@ -364,3 +364,87 @@ def add_auxiliary_task_arguments(group):
     )
 
     return group
+
+def add_att_scorer_arguments(group):
+    """
+    Argument mainly copied from: espnet.nets.pytorch_backend.transformer.argument
+    We only copy the argument for attention decoder / rescorer
+    All arguments are added with prefix 'att', which means RNN-T attention scorer only
+    """
+    group.add_argument(
+        "--att-scorer-weight",
+        default=0.0,
+        type=float,
+        help="weight of attention scorer loss",
+    )
+    group.add_argument(
+        "--att-decoder-selfattn-layer-type",
+        type=str,
+        default="selfattn",
+        choices=[
+            "selfattn",
+            "lightconv",
+            "lightconv2d",
+            "dynamicconv",
+            "dynamicconv2d",
+            "light-dynamicconv2d",
+        ],
+        help="transformer decoder self-attention layer type",
+    )
+    group.add_argument(
+        "--att-adim",
+        default=320,
+        type=int,
+        help="Number of attention transformation dimensions",
+    )
+    group.add_argument(
+        "--att-aheads",
+        default=4,
+        type=int,
+        help="Number of heads for multi head attention",
+    )
+    group.add_argument(
+        "--att-wshare",
+        default=4,
+        type=int,
+        help="Number of parameter shargin for lightweight convolution",
+    )
+    group.add_argument(
+        "--att-ldconv-decoder-kernel-length",
+        default="11_13_15_17_19_21",
+        type=str,
+        help="kernel size for lightweight/dynamic convolution: "
+        'Decoder side. For example, "21_23_25" means kernel length 21 for '
+        "First layer, 23 for Second layer and so on.",
+    )
+    group.add_argument(
+        "--att-ldconv-usebias",
+        type=strtobool,
+        default=False,
+        help="use bias term in lightweight/dynamic convolution",
+    )
+    group.add_argument(
+        "--att-dlayers", default=1, type=int, help="Number of decoder layers"
+    )
+    group.add_argument(
+        "--att-dunits", default=320, type=int, help="Number of decoder hidden units"
+    )
+    group.add_argument(
+        "--att-attn-dropout-rate",
+        default=None,
+        type=float,
+        help="dropout in transformer attention. use --dropout-rate if None is set",
+    )
+    group.add_argument(
+        "--att-dropout-rate",
+        default=0.0,
+        type=float,
+        help="Dropout rate for the encoder",
+    )
+    group.add_argument(
+        "--att-length-normalized-loss",
+        default=True,
+        type=strtobool,
+        help="normalize loss by length",
+    )
+    return group
