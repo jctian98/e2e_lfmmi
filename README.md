@@ -100,6 +100,15 @@ k2-fsa: https://github.com/k2-fsa/k2
   journal={arXiv preprint arXiv:2112.02498},  
   year={2021}  
 }  
+
+@misc{tian2022improving,
+      title={Improving Mandarin End-to-End Speech Recognition with Word N-gram Language Model}, 
+      author={Jinchuan Tian and Jianwei Yu and Chao Weng and Yuexian Zou and Dong Yu},
+      year={2022},
+      eprint={2201.01995},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
 ```
 ### Authorship
 Jinchuan Tian;  tianjinchuan@stu.pku.edu.cn or tyriontian@tencent.com  
