@@ -148,7 +148,7 @@ def filter_modules(model_state_dict, modules):
     return new_mods
 
 
-def _load_trained_model(model_path, training=True):
+def load_trained_model(model_path, training=True):
     """Load the trained model for recognition.
 
     Args:
@@ -182,7 +182,7 @@ def _load_trained_model(model_path, training=True):
 
 # when start decoding jobs with very large nj, this function leads
 # to reading error. Do this for many times
-def load_trained_model(model_path, training=True, patience=10):
+def _load_trained_model(model_path, training=True, patience=10):
 
     for i in range(patience):
         try:

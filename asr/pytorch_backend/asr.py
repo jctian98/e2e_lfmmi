@@ -15,7 +15,6 @@ from chainer import training
 from chainer.training import extensions
 from chainer.training.updater import StandardUpdater
 import numpy as np
-from tensorboardX import SummaryWriter
 import torch
 import torch.distributed as dist
 import time
@@ -1039,15 +1038,6 @@ def train(args):
     # trainer.extend(extensions.ProgressBar(update_interval=args.report_interval_iters))
     set_early_stop(trainer, args)
 
-    if args.tensorboard_dir is not None and args.tensorboard_dir != "":
-        trainer.extend(
-            TensorboardLogger(
-                SummaryWriter(args.tensorboard_dir),
-                att_reporter=att_reporter,
-                ctc_reporter=ctc_reporter,
-            ),
-            trigger=(args.report_interval_iters, "iteration"),
-        )
     # Run the training
     trainer.run()
     check_early_stop(trainer, args.epochs)

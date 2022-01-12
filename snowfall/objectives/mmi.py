@@ -220,8 +220,8 @@ class LFMMILoss(nn.Module):
         if self.use_pruned_intersect:
             func = _compute_mmi_loss_pruned
         else:
-            #  func = _compute_mmi_loss_exact_non_optimized
-            func = _compute_mmi_loss_exact_optimized
+            func = _compute_mmi_loss_exact_non_optimized
+            # func = _compute_mmi_loss_exact_optimized
 
         return func(nnet_output=nnet_output,
                     texts=texts,

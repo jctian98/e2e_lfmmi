@@ -213,6 +213,13 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
         #### use CPU for decoding
         ngpu=0
 
+        # If use rnnlm, download the official ckpts and add:
+        # --rnnlm exp/train_rnnlm_pytorch_lm/official_ckpts/rnnlm.model.best \
+        # --rnnlm-conf exp/train_rnnlm_pytorch_lm/official_ckpts/model.json \
+
+        # If use character-level N-gram lm, train with kenlm and add:
+        # --ngram-model exp/train_ngram/${ngram_order}gram.bin \
+
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             asr_recog.py \
             --config ${decode_config} \
@@ -222,9 +229,6 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results_0/${recog_model} \
-            --ngram-model exp/train_ngram/${ngram_order}gram.bin \
-            --rnnlm exp/train_rnnlm_pytorch_lm/official_ckpts/rnnlm.model.best \
-            --rnnlm-conf exp/train_rnnlm_pytorch_lm/official_ckpts/model.json \
             --local-rank JOB \
             $decode_opts
 

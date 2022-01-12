@@ -19,9 +19,6 @@ import torch
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.e2e_asr_common import label_smoothing_dist
 from espnet.nets.pytorch_backend.ctc import ctc_for
-from espnet.nets.pytorch_backend.frontends.feature_transform import (
-    feature_transform_for,  # noqa: H301
-)
 from espnet.nets.pytorch_backend.frontends.frontend import frontend_for
 from espnet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
 from espnet.nets.pytorch_backend.initialization import set_forget_bias_to_one
@@ -144,13 +141,6 @@ class E2E(ASRInterface, torch.nn.Module):
             )
         else:
             labeldist = None
-
-        if getattr(args, "use_frontend", False):  # use getattr to keep compatibility
-            self.frontend = frontend_for(args, idim)
-            self.feature_transform = feature_transform_for(args, (idim - 1) * 2)
-            idim = args.n_mels
-        else:
-            self.frontend = None
 
         # encoder
         self.enc = encoder_for(args, idim, self.subsample)

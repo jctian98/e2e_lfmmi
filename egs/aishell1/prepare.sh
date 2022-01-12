@@ -41,8 +41,6 @@ n_average=10
 data=/data/asr_data/aishell/
 data_url=www.openslr.org/resources/33
 
-word_arpa=/apdcephfs/share_1149801/speech_user/tomasyu/jinchuan/data/ngram/cweng_3g_5gram.arpa
-
 # exp tag
 tag="" # tag for managing experiments.
 
@@ -184,6 +182,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     text2token.py -s 1 -n 1 data/${train_dev}/text | cut -f 2- -d" " \
         > ${lmdatadir}/valid.txt
 
+    # NNLM. by default you do not need this
     #${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
     #    lm_train.py \
     #    --config ${lm_config} \
@@ -196,9 +195,10 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     #    --valid-label ${lmdatadir}/valid.txt \
     #    --resume ${lm_resume} \
     #    --dict ${dict}
-    
-    lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
-    build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
+
+    # prepare character-level N-gram LM. You need kenlm to run this  
+    # lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
+    # build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
 fi
 
 lang=data/lang_phone
@@ -225,6 +225,4 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         data/word_${order}gram/lm.arpa > data/word_${order}gram/G.fst.txt
     
     done
-
-    
 fi
