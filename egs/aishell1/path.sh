@@ -1,6 +1,6 @@
 # this is necessary since docker images would not run .bashrc if the command line is not "bash"
 # source ~/.bashrc # to include libfst.so
-conda activate lfmmi
+# conda activate lfmmi
 
 MAIN_ROOT=$PWD/../../
 KALDI_ROOT=../../kaldi/ # Kaldi is local and is not available on jizhi task
