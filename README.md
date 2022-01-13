@@ -71,27 +71,26 @@ export CHIEF_IP=xx.xx.xx.xx # IP of the master host
 ```
 4. You may encounter some problem about `k2`. Try to delete `data/lang_phone/Linv.pt` (in training) and `data/word_3gram/G.pt`(in decoding) and re-generate them again. 
 
-5. Multiple choices are available during decoding (we take `aed.sh` as an example, but the usage of `nt.sh` is the same).  
+5. Multiple choices are available during decoding (we take `nt.sh` as an example, but the usage of `aed.sh` is the same).  
    To use the MMI-related scorers, you need train the model with MMI auxiliary criterion;  
    
   To use MMI Prefix Score (in AED) or MMI Alignment score (in NT):
   ```
-  bash aed.sh --stage 2 --mmi-weight 0.2
+  bash nt.sh --stage 2 --mmi-weight 0.2
   ```
-  
   To use any external LM, you need to train them in advance (as implemented in `prepare.sh`)  
   
   To use word-level N-gram LM:
   ```
-  bash aed.sh --stage 2 --word-ngram-weight 0.4
+  bash nt.sh --stage 2 --word-ngram-weight 0.4
   ```
   To use character-level N-gram LM:
   ```
-  bash aed.sh --stage 2 --ngram-weight 1.0
+  bash nt.sh --stage 2 --ngram-weight 1.0
   ```
   To use neural network LM:
   ```
-  bash aed.sh --stage 2 --lm-weight 1.0
+  bash nt.sh --stage 2 --lm-weight 1.0
   ```
 ### Reference
 kaldi: https://github.com/kaldi-asr/kaldi  
