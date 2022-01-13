@@ -43,6 +43,7 @@ ln -s <path-to-kaldi> kaldi                                       # link kaldi
 step 2: prepare data, lexicon and LMs. Before you run, please set the datadir in `prepare.sh`
 
 ```
+cd egs/aishell1
 bash prepare.sh 
 ```
 
