@@ -4,7 +4,7 @@ This is the official implementation of paper:
 [**Consistent Training and Decoding For End-to-end Speech Recognition Using Lattice-free MMI**](https://arxiv.org/abs/2112.02498)  
 This is also the official implementation of paper:  
 [**Improving Mandarin End-to-End Speech Recognition with Word N-gram Language Model**](https://arxiv.org/abs/2201.01995)  
-We achieve state-of-the-art results on two of the most popular results in Aishell-1 and AIshell-2 Mandarin datasets.  
+We achieve state-of-the-art results on two of the most popular Mandarin datasets (Aishell-1 and Aishell-2).  
 Please feel free to change / modify the code as you like. :)
 ### Update
 - 2021/12/29: Release the first version, which contains all MMI-related features, including MMI training criteria, MMI Prefix Score (for attention-based encoder-decoder, AED) and MMI Alignment Score (For neural transducer, NT).
