@@ -20,7 +20,7 @@ for idx in `seq 1 $num_split`; do
    dir=$dst/$idx; mkdir -p $dir
    feats_scps="$feats_scps $dir/feats.scp"
 done
-espnet_utils/split_scp.py $tmpdir/feats.scp $feats_scps
+python3 espnet_utils/split_scp.py $tmpdir/feats.scp $feats_scps
 
 for idx in `seq 1 $num_split`; do
    dir=$dst/$idx;

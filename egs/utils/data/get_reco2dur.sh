@@ -20,7 +20,7 @@
 
 frame_shift=0.01
 cmd=run.pl
-nj=4
+nj=48
 
 . utils/parse_options.sh
 . ./path.sh

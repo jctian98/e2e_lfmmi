@@ -10,7 +10,7 @@ import codecs
 import json
 import logging
 import sys
-
+import random
 from espnet.utils.cli_utils import get_commandline_args
 
 is_python2 = sys.version_info[0] == 2
@@ -22,6 +22,7 @@ def get_parser():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--ark-size", type=int, default=0, help="json files")
+    parser.add_argument("--shuffle", action='store_true', help="shuffle the output")
     parser.add_argument("jsons", type=str, nargs="+", help="json files")
     return parser
 
@@ -55,6 +56,12 @@ if __name__ == "__main__":
             dict_truncated = j["utts"]
         js.update(dict_truncated)
     logging.info("new json has " + str(len(js.keys())) + " utterances")
+
+    if args.shuffle:
+        keys = list(js.keys())
+        random.shuffle(keys)
+        new_js = {k: js[k] for k in keys}
+        js = new_js
 
     # ensure "ensure_ascii=False", which is a bug
     jsonstring = json.dumps(

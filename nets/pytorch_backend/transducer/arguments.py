@@ -90,7 +90,7 @@ def add_custom_encoder_arguments(group):
         "--custom-enc-input-layer",
         type=str,
         default="conv2d",
-        choices=["conv2d", "vgg2l", "linear", "embed"],
+        choices=["conv2d", "vgg2l", "linear", "embed", "null"],
         help="Custom encoder input layer type",
     )
     group.add_argument(
@@ -446,5 +446,70 @@ def add_att_scorer_arguments(group):
         default=True,
         type=strtobool,
         help="normalize loss by length",
+    )
+    return group
+
+
+def add_transducer_code_switch_arguments(group):
+    """Define general arguments for transducer model."""
+    group.add_argument(
+        "--cs-is-pretrain",
+        default=False,
+        type=strtobool,
+        help="If true, ignore decoder loss",
+    )
+    group.add_argument(
+        "--cs-share-encoder",
+        default=False,
+        type=strtobool,
+        help="If true, use a shared encoder before the language-specific encoder",
+    )
+    group.add_argument(
+        "--cs-share-encoder-layers",
+        default=9,
+        type=int,
+        help="If true, number of layers in shared encoder",
+    )
+    group.add_argument(
+        "--cs-chn-start",
+        default=5,
+        type=int,
+        help="start index of chn symbols in dict",
+    )
+    group.add_argument(
+        "--cs-eng-start",
+        default=4302,
+        type=int,
+        help="start index of eng symbols in dict",
+    )
+    group.add_argument(
+        "--cs-use-adversial-examples",
+        default=False,
+        type=strtobool,
+        help="If true, mask symbols not from this language",
+    )
+    group.add_argument(
+        "--cs-is-ctc-decoder",
+        default=False,
+        type=strtobool,
+        help="If true, the fine tuning system is on CTC rather than RNNT",
+    )
+    group.add_argument(
+        "--cs-use-mask-predictor",
+        default=False,
+        type=strtobool,
+        help="If true, use a mask-filter process in combine function",
+    )
+    group.add_argument(
+        "--cs-lang-weight",
+        default=0.0,
+        type=float,
+        help="weight of language classificiation",
+    )
+    group.add_argument(
+        "--cs-decoder-expert",
+        default=False,
+        type=strtobool,
+        help="If true, use decoder expert",
     )
     return group

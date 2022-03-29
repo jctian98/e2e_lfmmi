@@ -117,12 +117,7 @@ class K2MMI(torch.nn.Module):
         if self.use_segment:
             ys = texts
         else:
-            # split by every character
             ys = [[self.char_list[c] for c in y if c != self.pad_id] for y in ys_pad]
-            #if "<space>" in self.char_list: # Like English
-            #   ys = ["".join(y).replace("<eos>", "").replace("<space>", "<space> ") for y in ys]
-            # else: # Chinese
-            # deprecate WSJ experiment. keep this branch only
             ys = [" ".join(y).replace("<eos>", "") for y in ys]
 
         supervision, indices = encode_supervision(hlens)
@@ -134,6 +129,10 @@ class K2MMI(torch.nn.Module):
         if self.training:
             assert self.P.is_cpu
             assert self.P.requires_grad is True
+        else:
+            # Never use segmentation in evaluation: to approximate the decoding stage
+            ys = [[self.char_list[c] for c in y if c != self.pad_id] for y in ys_pad]
+            ys = [" ".join(y).replace("<eos>", "") for y in ys]
 
         loss_fn = LFMMILoss(
             graph_compiler=self.graph_compiler,
@@ -256,11 +255,11 @@ class K2MMI(torch.nn.Module):
             HLG.lm_scores = HLG.scores.clone()
         self.HLG = HLG
         print("Successful Initialize Decoding HLG")
-        
-    def dump_weight(self, rank):
+    
+    def dump_weight(self, rank, path):
         d = {}
         for k, v in self.named_parameters():
             print(f"Found parameter {k} with shape {v.size()}")
             d[k] = v
-        save_path = self.lang / f"mmi_param.{rank}.pth"
-        torch.save(d, save_path)
+        save_path = os.path.join(path, f"mmi_param.{rank}.pth")
+        torch.save(d, save_path) 

@@ -12,6 +12,11 @@ import sys
 
 import sentencepiece as spm
 
+def is_all_chinese(strs):
+    for _char in strs:
+        if not '\u4e00' <= _char <= '\u9fa5':
+            return False
+    return True
 
 def main():
     parser = argparse.ArgumentParser()
@@ -26,6 +31,8 @@ def main():
                         help="filter sentence pairs with fewer than N tokens")
     parser.add_argument("--max-len", type=int, metavar="N",
                         help="filter sentence pairs with more than N tokens")
+    parser.add_argument("--split-chn", action="store_true",
+                        help="if true, remove all space between chn tokens")
     args = parser.parse_args()
 
     assert len(args.inputs) == len(args.outputs), \
@@ -70,10 +77,28 @@ def main():
             "num_filtered": 0,
         }
 
+        if args.split_chn:
+            process_chn = lambda x: " ".join(list(x))
+        else:
+            process_chn = lambda x: x 
+
+        def multilingual_encode(string):
+            ans = []
+            pieces = string.strip().split()
+  
+            for p in pieces:
+                if is_all_chinese(p):
+                    ans.append(process_chn(p))
+                else:
+                    ans.extend(encode(p))
+            
+            return ans
+
         def encode_line(line):
             line = line.strip()
             if len(line) > 0:
-                line = encode(line)
+                # line = encode(line)
+                line = multilingual_encode(line)
                 if valid(line):
                     return line
                 else:

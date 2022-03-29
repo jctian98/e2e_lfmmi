@@ -1,12 +1,12 @@
 """Search algorithms for transducer models."""
-
 from typing import List
 from typing import Union
-
+from collections import Counter, defaultdict
 import numpy as np
 import torch
 import time
-
+import math
+from itertools import groupby
 from espnet.nets.pytorch_backend.transducer.utils import create_lm_batch_state
 from espnet.nets.pytorch_backend.transducer.utils import init_lm_state
 from espnet.nets.pytorch_backend.transducer.utils import is_prefix
@@ -17,7 +17,8 @@ from espnet.nets.transducer_decoder_interface import Hypothesis
 from espnet.nets.transducer_decoder_interface import NSCHypothesis
 from espnet.nets.transducer_decoder_interface import TransducerDecoderInterface
 from espnet.nets.scorers.mmi_rescorer import MMIRescorer
-from espnet.nets.scorers.mmi_rnnt_scorer import MMIRNNTScorer
+# from espnet.nets.scorers.mmi_rnnt_scorer import MMIRNNTScorer
+from espnet.nets.scorers.mmi_alignment_score import MMIRNNTScorer
 from espnet.nets.scorers.ctc_rnnt_scorer import CTCRNNTScorer
 from espnet.nets.scorers.mmi_rnnt_lookahead_scorer import MMIRNNTLookaheadScorer
 
@@ -50,6 +51,7 @@ class BeamSearchTransducer:
         tlg_scorer=None,
         tlg_weight=0.0,
         forbid_eng=False,
+        eng_vocab=None,
     ):
         """Initialize transducer beam search.
 
@@ -100,8 +102,14 @@ class BeamSearchTransducer:
         self.tlg_weight = tlg_weight
         print(f"tlg scorer: {tlg_scorer} | tlg weight: {tlg_weight}")
 
-        if self.beam_size <= 1:
+        if search_type == "ctc_greedy":
+            self.search_algorithm = self.ctc_greedy_search
+            assert self.ctc_module is not None
+        elif self.beam_size <= 1:
             self.search_algorithm = self.greedy_search
+        elif search_type == "ctc_beam":
+            self.search_algorithm = self.ctc_beam_search
+            assert self.ctc_module is not None
         elif search_type == "default":
             self.search_algorithm = self.default_beam_search
         elif search_type == "tsd":
@@ -119,9 +127,13 @@ class BeamSearchTransducer:
 
         if lm is not None and lm_weight > 0.0:
             self.use_lm = True
-            self.is_wordlm = True if hasattr(lm.predictor, "wordlm") else False
-            self.lm_predictor = lm.predictor.wordlm if self.is_wordlm else lm.predictor
-            self.lm_layers = len(self.lm_predictor.rnn)
+            self.is_wordlm = True if hasattr(lm, "predictor") and \
+                             hasattr(lm.predictor, "wordlm") else False
+            if hasattr(lm, "predictor"):
+                self.lm_predictor = lm.predictor.wordlm if self.is_wordlm else lm.predictor
+                self.lm_layers = len(self.lm_predictor.rnn)
+            else:
+                self.is_transformer_lm = True
         else:
             self.use_lm = False
 
@@ -142,6 +154,11 @@ class BeamSearchTransducer:
                                or (x >= '\u0061' and x <= '\u007a')]
         print("Forbid chars: ", self.forbid_lst, flush=True)
 
+        self.eng_vocab = eng_vocab
+        if self.eng_vocab is not None:
+            self.eng_token_list = [x if not is_all_chinese(x) else "" \
+                                   for x in self.char_list]
+
     def __call__(self, h: torch.Tensor) -> Union[List[Hypothesis], List[NSCHypothesis]]:
         """Perform beam search.
 
@@ -153,6 +170,9 @@ class BeamSearchTransducer:
 
         """
         self.decoder.set_device(h.device)
+
+        if len(h.size()) == 3:
+            h = h.squeeze(0)
 
         if not hasattr(self.decoder, "decoders"):
             self.decoder.set_data_type(h.dtype)
@@ -182,6 +202,19 @@ class BeamSearchTransducer:
 
         return hyps[: self.nbest]
 
+    def vocab_regularization(self, hyps):
+        bpe_seperator = u'\u2581'
+ 
+        ans = []
+        for h in hyps:
+            yseq = h.yseq if isinstance(h, Hypothesis) else h[0] # rnnt or ctc hypothesis
+            text = "".join([self.eng_token_list[x] for x in yseq[1:]])
+            eng_words = [x for x in text.split(bpe_seperator)[:-1] if x != ""] # the last may not finish
+            if all([x in self.eng_vocab for x in eng_words]):
+                ans.append(h)
+ 
+        return ans
+
     def greedy_search(self, h: torch.Tensor) -> List[Hypothesis]:
         """Greedy search implementation for transformer-transducer.
 
@@ -210,6 +243,118 @@ class BeamSearchTransducer:
 
                 y, state, _ = self.decoder.score(hyp, cache)
         return [hyp]
+
+    def ctc_greedy_search(self, h: torch.Tensor) -> List[Hypothesis]:
+        if len(h.size()) == 2:
+            h = h.unsqueeze(0)       
+ 
+        lpz = self.ctc_module.argmax(h)
+        collapsed_indices = [x[0] for x in groupby(lpz[0])]
+        hyp = [x for x in filter(lambda x: x != self.blank, collapsed_indices)]
+        nbest_hyps = [Hypothesis(score=0.0, yseq=[self.blank] + hyp, dec_state=None)]
+        return nbest_hyps
+
+    # mainly derived from wenet
+    def ctc_beam_search(self, h: torch.Tensor) -> List[Hypothesis]:
+        if len(h.size()) == 2:
+            h = h.unsqueeze(0)
+
+        ctc_prob = self.ctc_module.log_softmax(h)[0]
+        maxlen = ctc_prob.size(0)
+
+        use_full_score = False
+        if self.word_ngram_weight > 0.0:
+            lm, lm_weight = self.word_ngram_scorer, self.word_ngram_weight
+        elif self.ngram_weight > 0.0:
+            lm, lm_weight = self.ngram_scorer, self.ngram_weight
+        elif self.lm_weight > 0.0:
+            lm, lm_weight = self.lm, self.lm_weight
+            use_full_score = True
+        else:
+            lm, lm_weight = None, 0.0
+        
+        if lm is not None:
+            # yseq: (lm_score, lm_state)
+            lm_cache = {(self.blank,): (0.0, lm.init_state(None))}
+            sort_fn = lambda x: log_add(list(x[1])) + lm_cache[x[0]][0]
+        else:
+            lm_cache = None
+            sort_fn = lambda x: log_add(list(x[1])) 
+
+        # non-blank sequence; (blank_ending_score, non_blank_ending_score)
+        cur_hyps = [((self.blank,), (0.0, -float('inf')))]
+        for t in range(0, maxlen):
+            logp = ctc_prob[t]
+            next_hyps = defaultdict(lambda: (-float('inf'), -float('inf')))
+            top_k_logp, top_k_index = logp.topk(self.beam_size)
+     
+            for s in top_k_index:
+                s = s.item()
+                ps = logp[s].item()
+
+                for prefix, (pb, pnb) in cur_hyps:
+                    last = prefix[-1] if len(prefix) > 0 else None
+                    if s == self.blank: # blank
+                        n_pb, n_pnb = next_hyps[prefix]
+                        n_pb = log_add([n_pb, pb + ps, pnb + ps])
+                        next_hyps[prefix] = (n_pb, n_pnb)
+                    elif s == last:
+                        #  Update *ss -> *s;
+                        n_pb, n_pnb = next_hyps[prefix]
+                        n_pnb = log_add([n_pnb, pnb + ps])
+                        next_hyps[prefix] = (n_pb, n_pnb)
+                        #  Update *s-s -> *ss, - is for blank
+                        n_prefix = prefix + (s, )
+                        n_pb, n_pnb = next_hyps[n_prefix]
+                        n_pnb = log_add([n_pnb, pb + ps])
+                        next_hyps[n_prefix] = (n_pb, n_pnb)
+                    else:
+                        n_prefix = prefix + (s, )
+                        n_pb, n_pnb = next_hyps[n_prefix]
+                        n_pnb = log_add([n_pnb, pb + ps, pnb + ps])
+                        next_hyps[n_prefix] = (n_pb, n_pnb)
+
+            # LM on-the-fly rescore for unseen prefix
+            if lm is not None:
+                for prefix, (_, _) in next_hyps.items():
+                    if not prefix in lm_cache.keys():
+                        y = prefix[:-1]
+                        # update all children hypotheses: NNLM 
+                        if use_full_score:
+                            scores, state = lm.score(torch.Tensor(y).long(), 
+                                                     lm_cache[y][1], h)
+                            for k in range(len(scores)):
+                                lm_cache[y + (k,)] = (lm_cache[y][0] \
+                                  + scores[k].item() * lm_weight, 
+                                  lm.select_state(state, k)
+                                )
+                        # update only this hypothesis: N-gram LM                                
+                        else:
+                            next_token = prefix[-1:]
+                            score, state = lm.score_partial(
+                                             torch.Tensor(y).long(), 
+                                             torch.Tensor(next_token).long(),
+                                             lm_cache[y][1], h
+                                           )
+                            lm_cache[prefix] = (lm_cache[y][0] + score[0].item() * lm_weight, 
+                                                lm.select_state(state, 0)
+                                               )
+             
+            next_hyps = sorted(next_hyps.items(), key=sort_fn, reverse=True)
+            if self.eng_vocab:
+                next_hyps = self.vocab_regularization(next_hyps)
+            cur_hyps = next_hyps[:self.beam_size]
+
+        hyps = [Hypothesis(score=log_add([hyp[1][0], hyp[1][1]]),
+                           yseq=list(hyp[0]),
+                           dec_state=None,
+                           mmi_tot_score=lm_cache[hyp[0]][0] \
+                             if lm_cache is not None else 0.0
+                           )
+                           for hyp in cur_hyps
+               ]
+
+        return hyps 
 
     def default_beam_search(self, h: torch.Tensor) -> List[Hypothesis]:
         """Beam search implementation.
@@ -395,6 +540,8 @@ class BeamSearchTransducer:
             nbest_hyps: N-best decoding results
 
         """
+
+        hidden = h
         beam = min(self.beam_size, self.vocab_size)
 
         h_length = int(h.size(0))
@@ -420,9 +567,12 @@ class BeamSearchTransducer:
 
         # lm initialization
         if self.use_lm and not self.is_wordlm:
-            B[0].lm_state = init_lm_state(self.lm_predictor)
- 
-        if isinstance(self.mmi_scorer, (MMIRNNTScorer, CTCRNNTScorer, MMIRNNTLookaheadScorer)):
+            if hasattr(self, "lm_predictor"):
+                B[0].lm_state = init_lm_state(self.lm_predictor)
+            else:
+                B[0].lm_state = self.lm.init_state(h)
+
+        if self.mmi_scorer is not None and self.mmi_weight > 0.0:
             mmi_nnet_output, mmi_den_scores = self.mmi_scorer.den_scores(h)
 
         if self.ctc_module:
@@ -469,21 +619,16 @@ class BeamSearchTransducer:
                 # warning: like in LASCTC, the LM score would not be considered in top-k process
                 beam_topk = beam_logp[:, 1:].topk(beam, dim=-1) # values and indices: [beam, beam]. blank excluded
 
-                if self.use_lm:
+                if self.use_lm and not self.is_transformer_lm:
                     beam_lm_states = create_lm_batch_state(
                         [b.lm_state for b in B_], self.lm_layers, self.is_wordlm
                     )
 
-                    # LM prediction for next token
                     beam_lm_states, beam_lm_scores = self.lm.buff_predict(
                         beam_lm_states, beam_lm_tokens, len(B_)
                     )
 
                 for i, hyp in enumerate(B_):
-                    # tot_mmi_score in both case just keep the history
-                    # but will be re-assigned later
-
-                    # keep all hyps with an additional blank
                     new_hyp = Hypothesis(
                         score=(hyp.score + float(beam_logp[i, 0])),
                         yseq=hyp.yseq[:],
@@ -494,10 +639,10 @@ class BeamSearchTransducer:
                         tlg_state=hyp.tlg_state,
                     )
 
-                    A.append(new_hyp)
-                   
-                    if h_states[i][0] == (h_length - 1): # heat the last frame
+                    if h_states[i][0] == (h_length - 1):
                         final.append(new_hyp)
+                    
+                    A.append(new_hyp)
 
                     # Only search a part of candidate tokens
                     if self.word_ngram_scorer and self.word_ngram_weight > 0.0:
@@ -517,6 +662,11 @@ class BeamSearchTransducer:
                     else:
                         tlg_scores = [0.0] * len(beam_topk[1][i])
                         tlg_states = [None] * len(beam_topk[1][i])
+
+                    if self.use_lm and self.is_transformer_lm:
+                        lm_score, lm_state = self.lm.score(torch.Tensor(hyp.yseq).long(),
+                                                           hyp.lm_state,
+                                                           None)
                      
                     for j, (logp, k) in enumerate(zip(beam_topk[0][i], beam_topk[1][i] + 1)):
  
@@ -530,20 +680,28 @@ class BeamSearchTransducer:
                             tlg_state=tlg_states[j] 
                         )
 
-                        # add LM scores. possibly 4 styles
-                        if self.use_lm:
+                        # add LM scores. possibly 5 styles
+                        if self.use_lm and not self.is_transformer_lm:
                             new_hyp.score += self.lm_weight * beam_lm_scores[i, k]
 
                             new_hyp.lm_state = select_lm_state(
                                 beam_lm_states, i, self.lm_layers, self.is_wordlm
                             )
 
+                        if self.use_lm and self.is_transformer_lm:
+                            new_hyp.score += self.lm_weight * lm_score[k]
+
+                            new_hyp.lm_state = lm_state   
+ 
+                        # Word-level N-gram LM
                         if self.word_ngram_scorer and self.word_ngram_weight > 0.0:
                             new_hyp.score += self.word_ngram_weight * word_ngram_scores[j]
 
+                        # TLG.fst
                         if self.tlg_scorer and self.tlg_weight > 0.0:
                             new_hyp.score += self.tlg_weight * tlg_scores[j]
 
+                        # N-gram LM
                         if self.ngram_scorer and self.ngram_weight > 0.0:
                             ngram_score, _ = self.ngram_scorer.score_partial(
                                              torch.Tensor(hyp.yseq[:]).int(),
@@ -552,9 +710,11 @@ class BeamSearchTransducer:
                             new_hyp.score += self.ngram_weight * ngram_score.item()
                             
                         A.append(new_hyp)
-            
-            if isinstance(self.mmi_scorer, (MMIRNNTScorer, CTCRNNTScorer, MMIRNNTLookaheadScorer)) and self.mmi_weight > 0.0:
-                # any hypo in A has t + u = i + 1: a new step
+           
+            if self.eng_vocab is not None:
+                A = self.vocab_regularization(A)
+ 
+            if self.mmi_scorer is not None and self.mmi_weight > 0.0:
                 A = self.mmi_scorer.batch_score(A, mmi_nnet_output, mmi_den_scores, tu_sum+1, self.mmi_weight)
 
             # unlike the original implementation, we combine the hypotheses before pruning
@@ -568,13 +728,8 @@ class BeamSearchTransducer:
             for i, h in enumerate(final):
                 h.score += self.tlg_weight * tlg_final_scores[i]
 
-        if self.word_ngram_scorer and self.word_ngram_weight > 0.0 and final:
-            # If this is a Rescorer, add the rescoring score.
-            for h in final:
-                h.score += self.word_ngram_weight * \
-                           self.word_ngram_scorer.final_score(h.word_ngram_score)
-            # If this is not a Rescorer, clear the cache
-            self.word_ngram_scorer.clear_cache()
+        if self.mmi_scorer is not None and self.mmi_weight == 0.0:
+            final = self.mmi_scorer.batch_rescore(final, hidden)
 
         if final:
             return self.sort_nbest(final)
@@ -771,3 +926,20 @@ class BeamSearchTransducer:
             kept_hyps = sorted((S + V), key=lambda x: x.score, reverse=True)[:beam]
 
         return self.sort_nbest(kept_hyps)
+
+# wenet log_add implementation used in beam search
+def log_add(args: List[int]) -> float:
+    """
+    Stable log add
+    """
+    if all(a == -float('inf') for a in args):
+        return -float('inf')
+    a_max = max(args)
+    lsp = math.log(sum(math.exp(a - a_max) for a in args))
+    return a_max + lsp
+
+def is_all_chinese(strs):
+    for _char in strs:
+        if not '\u4e00' <= _char <= '\u9fa5':
+            return False
+    return True

@@ -7,6 +7,7 @@
 
 nlsyms=""
 wer=false
+mer=false
 bpe=""
 bpemodel=""
 remove_blank=true
@@ -46,7 +47,7 @@ if [ $num_spkrs -eq 1 ]; then
 
   if [ $sppd3 = true ]; then
       cp ${dir}/hyp.trn ${dir}/hyp.trn.org 
-      python3 espnet_utils/filter_trn.py $dir/hyp.trn.org "叮 当 叮 当 "  > ${dir}/hyp.trn
+      python3 espnet_utils/filter_trn.py $dir/hyp.trn.org > ${dir}/hyp.trn
   fi
 
   sclite -r ${dir}/ref.trn trn -h ${dir}/hyp.trn trn -i rm -o all stdout > ${dir}/result.txt
@@ -68,6 +69,18 @@ if [ $num_spkrs -eq 1 ]; then
       echo "write a WER result in ${dir}/result.wrd.txt"
       grep -e Avg -e SPKR -m 2 ${dir}/result.wrd.txt
       python3 espnet_utils/double_precious_cer.py ${dir}/result.wrd.txt
+
+      if ${mer}; then
+         python3 espnet_utils/prepare_mer.py ${dir}/ref.wrd.trn ${dir}/ref.wrd.trn.chn ${dir}/ref.wrd.trn.eng
+         python3 espnet_utils/prepare_mer.py ${dir}/hyp.wrd.trn ${dir}/hyp.wrd.trn.chn ${dir}/hyp.wrd.trn.eng 
+         sclite -r ${dir}/ref.wrd.trn.chn trn -h ${dir}/hyp.wrd.trn.chn trn -i rm -o all stdout > ${dir}/result.wrd.chn.txt
+         sclite -r ${dir}/ref.wrd.trn.eng trn -h ${dir}/hyp.wrd.trn.eng trn -i rm -o all stdout > ${dir}/result.wrd.eng.txt
+         
+         echo "write a Mandarin CER result of code-switch data in ${dir}/result.wrd.chn.txt"
+         grep -e Avg -e SPKR -m 2 ${dir}/result.wrd.chn.txt
+         echo "write a English MER result of code-switch data in ${dir}/result.wrd.eng.txt"
+         grep -e Avg -e SPKR -m 2 ${dir}/result.wrd.eng.txt
+      fi
   fi
 elif [ ${num_spkrs} -lt 4 ]; then
   ref_trns=""

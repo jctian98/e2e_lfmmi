@@ -5,6 +5,8 @@ from snowfall.training.mmi_graph import MmiTrainingGraphCompiler
 from snowfall.lexicon import Lexicon
 from snowfall.training.mmi_graph import create_bigram_phone_lm
 # from espnet.nets.scorers.trace_frame import trace_frame
+from espnet.nets.scorers.mmi_utils import step_intersect
+
 
 class MMIFrameScorer(PartialScorerInterface):
     def __init__(self, lang, device, idim, sos_id, rank, use_segment, char_list):
@@ -69,6 +71,18 @@ class MMIFrameScorer(PartialScorerInterface):
         den_scores = torch.cat(den_scores).unsqueeze(0) # [T] -> [B, T]
         print("den_scores: ", den_scores)
 
+        ### DEBUG ###
+        supervision = torch.Tensor([[0, 0, T]]).to(torch.int32)
+        dense_fsa_vec = k2.DenseFsaVec(nnet_output, supervision)
+        den_scores_ = step_intersect(den, dense_fsa_vec)[0].unsqueeze(0)
+        den_scores_ = torch.flip(den_scores_, [1]) 
+
+        max_diff = torch.max(torch.abs(den_scores - den_scores_)).item()
+        if abs(max_diff) > 0.02:
+            print("denominator error: ", den_scores, den_scores_)
+            raise ValueError
+        ### END DEBUG ###
+
         # (3) Prev Score is zero
         prev_score = torch.Tensor([0]).to(torch.float32)
         return nnet_output, den_scores, prev_score 
@@ -120,6 +134,26 @@ class MMIFrameScorer(PartialScorerInterface):
         num_tot_scores = num_lats.get_tot_scores(log_semiring=True, use_double_scores=True)
         num_tot_scores = num_tot_scores.view(T, batch_size).transpose(0, 1) # -> [B, T]
         
+        ### DEBUG ###
+        supervision = torch.stack([
+                      torch.arange(batch_size),
+                      torch.zeros(batch_size),
+                      torch.ones(batch_size).int() * T
+                      ], dim=1).to(torch.int32)
+        dense_fsa_vec = k2.DenseFsaVec(nnet_output, supervision)
+
+        ys = ys[: batch_size]
+        texts = [" ".join([self.char_list[tid] for tid in text[1:]]) for text in ys]
+        texts = [text.replace("<eos>", "").strip() for text in texts]
+        num_graphs, _ = self.graph_compiler.compile(texts, self.P, replicate_den=False)
+        num_tot_scores_ = torch.stack(step_intersect(num_graphs, dense_fsa_vec), dim=0)
+        num_tot_scores_ = torch.flip(num_tot_scores_, [1])
+
+        max_diff = torch.max(torch.abs(num_tot_scores - num_tot_scores_)).item()
+        if abs(max_diff) > 0.02:
+            print("numerator error: ", num_tot_scores, num_tot_scores_)
+            raise ValueError 
+        ### END DEBUG ### 
 
         #     minus the denominator scores. 
         tot_scores_frame = num_tot_scores - den_scores

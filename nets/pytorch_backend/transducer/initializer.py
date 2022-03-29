@@ -16,6 +16,8 @@ def initializer(model, args):
         args (Namespace): argument Namespace containing options
 
     """
+
+    # RNN only
     for name, p in model.named_parameters():
         if any(x in name for x in ["enc.", "dec.", "joint_network"]):
             # rnn based parts + joint network

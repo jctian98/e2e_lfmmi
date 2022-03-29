@@ -137,7 +137,6 @@ def _compute_mmi_loss_exact_non_optimized(
 
     den_tot_scores = den_lats.get_tot_scores(log_semiring=True,
                                              use_double_scores=True)
-
     tot_scores = num_tot_scores - den_scale * den_tot_scores
     tot_score, tot_frames, all_frames = get_tot_objf_and_num_frames(
         tot_scores, supervision_segments[:, 2])

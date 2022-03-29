@@ -276,7 +276,7 @@ def get_parser(parser=None, required=True):
     # optimization related
     parser.add_argument(
         "--opt",
-        default="adadelta",
+        default="noam_sgd",
         type=str,
         choices=["adadelta", "adam", "noam", "noam_sgd"],
         help="Optimizer",
@@ -326,13 +326,13 @@ def get_parser(parser=None, required=True):
     )
     parser.add_argument(
         "--num-save-attention",
-        default=3,
+        default=0,
         type=int,
         help="Number of samples of attention to be saved",
     )
     parser.add_argument(
         "--num-save-ctc",
-        default=3,
+        default=0,
         type=int,
         help="Number of samples of CTC probability to be saved",
     )

@@ -9,6 +9,8 @@ import math
 import copy
 import numpy
 import torch
+from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
+import editdistance
 
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.ctc_prefix_score import CTCPrefixScore
@@ -50,6 +52,10 @@ from espnet.nets.scorers.mmi_lookahead import MMILookaheadScorer
 from espnet.nets.scorers.mmi_rescorer import MMIRescorer
 from espnet.nets.scorers.mmi_frame_scorer import MMIFrameScorer
 from espnet.nets.scorers.mmi_frame_prefix_scorer import MMIFramePrefixScorer
+from espnet.nets.scorers.ctc import CTCPrefixScorer
+from espnet.nets.beam_search import BeamSearch
+
+from espnet.utils.print import step_print
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -169,6 +175,33 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             self.ctc = None
 
+        # Decoder for on-the-fly decoding. Used in MBR training
+        if args.aux_mbr:
+            scorers = {"decoder": self.decoder,
+                       "ctc": CTCPrefixScorer(self.ctc, self.eos),
+                      }
+            weights = {"decoder": 1 - args.mtlalpha, 
+                       "ctc": args.mtlalpha,
+                      } 
+            self.beam_search = BeamSearch(
+                beam_size=args.aux_mbr_beam,
+                vocab_size=len(args.char_list),
+                weights=weights,
+                scorers=scorers,
+                sos=self.sos,
+                eos=self.eos,
+                token_list=args.char_list,
+                pre_beam_score_key=None if args.mtlalpha == 1.0 else "full",
+            )
+            self.aux_mbr_beam = args.aux_mbr_beam
+            self.aux_mbr_weight = args.aux_mbr_weight
+            self.mbr_criterion = torch.nn.CrossEntropyLoss(
+                ignore_index=self.ignore_id,
+                reduction="none",
+            ) 
+        else:
+            self.beam_search = None 
+
         if args.report_cer or args.report_wer:
             self.error_calculator = ErrorCalculator(
                 args.char_list,
@@ -180,6 +213,7 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             self.error_calculator = None
         self.rnnlm = None
+        self.char_list = args.char_list
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -227,6 +261,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # TODO(karita) show predicted text
         # TODO(karita) calculate these stats
         cer_ctc = None
+
         if self.mtlalpha == 0.0:
             loss_ctc = None
         else:
@@ -242,6 +277,9 @@ class E2E(ASRInterface, torch.nn.Module):
             if not self.training:
                 self.ctc.softmax(hs_pad)
 
+        if self.beam_search:
+            loss_mbr = self.mbr_forward(xs_pad_orig, ilens, ys_pad, hs_pad, hs_mask)
+        
         # 5. compute cer/wer
         if self.training or self.error_calculator is None or self.decoder is None:
             cer, wer = None, None
@@ -266,16 +304,110 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # Add the third loss if it is adopted
         if hasattr(self, "third_weight"):
-            self.loss += self.third_weight * third_loss 
+            self.loss += self.third_weight * third_loss
+            third_loss_data = float(third_loss) 
+        else:
+            third_loss_data = None
+
+        if self.beam_search:
+            self.loss += self.aux_mbr_weight * loss_mbr
+            loss_mbr_data = float(loss_mbr)
+        else:
+            loss_mbr_data = None
 
         loss_data = float(self.loss)
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
             self.reporter.report(
-                loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data
+                loss_ctc_data, loss_att_data, third_loss_data, loss_mbr_data, 
+                self.acc, cer_ctc, cer, wer, loss_data
             )
         else:
             logging.warning("loss (=%f) is not correct", loss_data)
         return self.loss
+     
+    def mbr_forward(self, xs_pad_orig, ilens, ys_pad, hs_pad, hs_mask):
+        batch_size = len(ilens)
+
+        # (1) on-the-fly decoding
+        self.eval()
+        with torch.no_grad():
+            src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad_orig.device).unsqueeze(-2)
+            specs, hs_mask = self.encoder(xs_pad_orig, src_mask)
+
+            hs = [h[h != 0] for h in hs_mask]
+            hlens = list(map(int, [h.size(0) for h in hs]))
+            specs = [h[:l] for h, l in zip(specs, hlens)]
+
+            with ThreadPoolExecutor(max_workers=self.aux_mbr_beam) as executor:
+                futures = [executor.submit(self.beam_search, h) for h in specs]
+                wait(futures, return_when=ALL_COMPLETED)
+
+            hyps = []
+            for future in futures:
+                hyps.extend(future.result()[:self.aux_mbr_beam])
+            hyps = [h.yseq[1:-1].tolist() for h in hyps] # exclude <sos>, <eos>
+
+            # for debug
+            for i, y in enumerate(ys_pad):
+                ref_text = "".join([self.char_list[x] for x in y if x != self.ignore_id])
+                # print(f"ref_text: {ref_text}")
+                for y in hyps[i * self.aux_mbr_beam: (i+1) * self.aux_mbr_beam]:
+                    hyp_text = "".join([self.char_list[x] for x in y])
+                    # print(f"hyp_text: {hyp_text}")
+        self.train()
+
+        # problem in decoding
+        if not len(hyps) == self.aux_mbr_beam * batch_size:
+            return 0.0
+
+        # (2) edit-distance
+        dist = self.compute_edit_distance(hyps, ys_pad)
+        if dist is None:
+            return 0.0 # fail in editdistance.
+
+        # (3) decoder forward: prob of each hyp
+        hyp_maxlen = max([len(hyp) for hyp in hyps])
+        hyps_pad = [hyp + [self.ignore_id] * (hyp_maxlen - len(hyp)) for hyp in hyps]
+        hyps_pad = torch.Tensor(hyps_pad).to(ys_pad.device).to(ys_pad.dtype)
+        hyps_pad_in, hyps_pad_out = add_sos_eos(hyps_pad, self.sos, self.eos, self.ignore_id)
+        hyps_mask = target_mask(hyps_pad_in, self.ignore_id)
+
+        idx = torch.arange(self.aux_mbr_beam * batch_size) // self.aux_mbr_beam
+        hs_pad = hs_pad[idx]
+        hs_mask = hs_mask[idx]
+
+        pred_pad, _ = self.decoder(hyps_pad_in, hyps_mask, hs_pad, hs_mask)
+        loss_att = self.mbr_criterion(pred_pad.permute(0, 2, 1), hyps_pad_out)
+        mask = torch.eq(hyps_pad_out.int(), self.ignore_id)
+        loss_att.masked_fill(torch.eq(hyps_pad_out, self.ignore_id), 0.0)
+        loss_att = (-loss_att.sum(dim=-1)).exp()
+
+        # (4) MBR loss. 
+        num = (loss_att * dist).view(batch_size, self.aux_mbr_beam)
+        den = loss_att.view(batch_size, self.aux_mbr_beam)
+        loss_mbr = num.sum(dim=-1) / (den.sum(dim=-1) + 1e-10) # smooth
+        loss_mbr = loss_mbr.mean() # other Loss also works in reduction=mean
+        return loss_mbr
+       
+    def compute_edit_distance(self, hyps, refs):
+        # hyps: list of list with number batch * beam
+        # refs: 2-D tensor of labels. -1 means padding
+
+        # convert refs into list and remove padding 
+        refs_device = refs.device
+        refs = refs.cpu().tolist()
+        refs = [[x for x in t if x != self.ignore_id] for t in refs]
+
+        if not len(hyps) % len(refs) == 0:
+            raise ValueError("The number of hypotheses is not correct")
+
+        beam = int(len(hyps) / len(refs))
+
+        dist = [editdistance.eval(hyp, refs[i//beam])
+                for i, hyp in enumerate(hyps)
+               ]
+        dist = torch.IntTensor(dist).to(refs_device)
+        return dist 
 
     def scorers(self):
         """Scorers."""

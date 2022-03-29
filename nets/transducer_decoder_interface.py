@@ -21,7 +21,7 @@ class Hypothesis:
         Tuple[torch.Tensor, Optional[torch.Tensor]], List[torch.Tensor], torch.Tensor
     ]
     lm_state: Union[Dict[str, Any], List[Any]] = None
-    mmi_tot_score: float = 0.0
+    mmi_tot_score: float = None
     word_ngram_score: float = None
     tlg_state: dict = None
 

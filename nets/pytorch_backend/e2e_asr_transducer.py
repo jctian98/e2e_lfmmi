@@ -609,15 +609,63 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             logging.warning("loss (=%f) is not correct", loss_data)
 
+        """ 
+        # draw figures        
+        T = hs_pad.size(1)
+        mmi_array, trans_array = [], []
+        for t in range(1, T+1):
+            hlen = torch.Tensor([t]).int().cuda()
+            mmi_loss_item = - self.aux_mmi(hs_pad[:, :t], hlen, ys_pad[:, :-2], texts).item()
+            loss_trans_item = - self.criterion(z[:, :t, :-2].contiguous(), target[:, :-2], hlen, target_len-2).item()
+            mmi_array.append(mmi_loss_item)
+            trans_array.append(loss_trans_item)
+        print(mmi_array, trans_array)
+
+        print(texts[0])
+        import uuid
+        this_uuid = uuid.uuid4()
+        filename = f"figures/{this_uuid}.png"
+        print(f"plot save in {filename}")
+
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        # plt.style.use('seaborn-whitegrid')
+        palette = plt.get_cmap('Set1')
+        font1 = {'family' : 'Times New Roman',
+        'weight' : 'normal',
+        'size'   : 18,
+        }
+
+        plt.clf()
+        axis = range(1, len(mmi_array) + 1)
+        plt.plot(mmi_array, label="LF-MMI", color="red", marker='*')
+        plt.plot(trans_array, label="NT", color="blue", marker='v')
+        plt.xlabel("Frame Index t", fontsize=14)
+        plt.ylabel("Log-Posterior", fontsize=14)
+        plt.xticks([162, 163], fontsize=10)
+        plt.yticks([-80, -50, -20], fontsize=10)
+        plt.vlines(162, -100, 0, color="black", linestyles = "dashed")
+        plt.vlines(163, -100, 0, color="black", linestyles = "dashed") 
+        plt.xlim((154, 175))
+        plt.ylim((-80, 0))
+        plt.legend(loc='upper left', fontsize=14)       
+
+        # plt.grid() 
+        plt.tight_layout()
+        plt.savefig(filename)
+        """
+
         return self.loss
 
-    def mbr_forward(self, xs_pad_orig, ilens, ys_pad, hs_pad):
-        # torch.set_printoptions(sci_mode=False)
+        
 
-        self.eval()
+    def mbr_forward(self, xs_pad_orig, ilens, ys_pad, hs_pad):
         batch_size = len(ilens)
         
         # (1) on-the-fly decoding
+        self.eval()
         with torch.no_grad():
             # decode without data augmentation (a.k.a., xs_pad_orig)
             if "custom" in self.etype:
@@ -639,7 +687,7 @@ class E2E(ASRInterface, torch.nn.Module):
             Multi-thread is used. Remember to use 'export OMP_NUM_THREADS=<ncpu>'
               to achieve faster decoding speed
             """
-            with ThreadPoolExecutor(max_workers=1) as executor:
+            with ThreadPoolExecutor(max_workers=self.aux_mbr_beam) as executor:
                 futures = [executor.submit(self.beam_search, h) for h in specs]
                 wait(futures, return_when=ALL_COMPLETED)
             
@@ -647,7 +695,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 for future in futures:
                     hyps.extend(future.result()) 
                 hyps = [h.yseq[1:] for h in hyps] # exclude <sos>
-
+    
                 # for debug
                 # for i, y in enumerate(ys_pad):
                 #     ref_text = "".join([self.char_list[x] for x in y if x != self.ignore_id])
@@ -655,8 +703,12 @@ class E2E(ASRInterface, torch.nn.Module):
                 #     for y in hyps[i * self.aux_mbr_beam: (i+1) * self.aux_mbr_beam]:
                 #         hyp_text = "".join([self.char_list[x] for x in y if x != self.blank_id])
                 #         print(f"hyp_text: {hyp_text}")
-        
+
         self.train()
+
+        if not len(hyps) == self.aux_mbr_beam * batch_size:
+            print("WARNNING: on-the-decoding fail in this iteration.")
+            return 0.0
 
         # (2) compute edit distance
         dist = self.compute_edit_distance(hyps, ys_pad)
@@ -710,17 +762,15 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # This is exactly posterior P(W|O) 
         loss_trans = (-loss_trans).exp()
-  
+        # print("probability: ", loss_trans)
+        # print("edit distance: ", dist)
+ 
         # (4) MBR loss. 
-        # Can also change to MMI loss if LM scores are provided 
         num = (loss_trans * dist).view(batch_size, self.aux_mbr_beam)
         den = loss_trans.view(batch_size, self.aux_mbr_beam)
         loss_mbr = num.sum(dim=-1) / den.sum(dim=-1)
-        loss_mbr = loss_mbr.mean()
+        loss_mbr = loss_mbr.mean() # RNN-T Loss also works in reduction=mean
         
-        # as cweng is using frame-level loss 
-        # loss_mbr *= max(ilens)    
- 
         return loss_mbr 
  
     def compute_edit_distance(self, hyps, refs):
@@ -780,7 +830,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
         return hs.squeeze(0)
 
-    def recognize(self, x, beam_search):
+    def recognize(self, x, beam_search, decode_feature="combine"):
         """Recognize input features.
 
         Args:
@@ -791,6 +841,8 @@ class E2E(ASRInterface, torch.nn.Module):
             nbest_hyps (list): n-best decoding results
 
         """
+        assert decode_feature == "combine" # other method only for code-switch
+
         self.eval()
 
         if "custom" in self.etype:

@@ -6,7 +6,7 @@
 
 # Our system:
 # Centos 7; GCC 7.3.1
-# Python 3.8 + CUDA 10.1 + Pytorch 1.7.1, 
+# Python; Pytorch 1.7.1, 
 
 rootdir=/home/tian/tools/opensource
 stage=$1

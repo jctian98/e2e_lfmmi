@@ -147,8 +147,8 @@ def get_parser():
     parser.add_argument(
         "--search-type",
         type=str,
-        default="default",
-        choices=["default", "nsc", "tsd", "alsd"],
+        default="alsd",
+        choices=["default", "nsc", "tsd", "alsd", "ctc_greedy", "ctc_beam"],
         help="""Type of beam search implementation to use during inference.
         Can be either: default beam search, n-step constrained beam search ("nsc"),
         time-synchronous decoding ("tsd") or alignment-length synchronous decoding
@@ -277,17 +277,16 @@ def get_parser():
         help="MMI scorer weight",
     )
     parser.add_argument(
+        "--mas-lookahead",
+        type=int,
+        default=0,
+        help="Number of frames to look-ahead in MMI alignment scores",
+    )
+    parser.add_argument(
         "--use-segment",
         type=strtobool,
         default=False,
         help="If true, the MMI score is parsed by jieba. (Chinese only)",
-    )
-    parser.add_argument(
-        "--mmi-type",
-        type=str,
-        choices=["char", "lookahead", "frame", "rescore"],
-        default="char",
-        help="How MMI scores are computed"
     )
     parser.add_argument(
         "--mmi-rescore",
@@ -295,7 +294,6 @@ def get_parser():
         default=False,
         help="Do mmi rescoring after decoding, only for lasctc framework"
     )
-
     parser.add_argument(
         "--word-ngram",
         type=str,
@@ -349,6 +347,25 @@ def get_parser():
         type=strtobool,
         default=False,
         help="If true, forbid the rnnt model to predict English characters (rnnt only)",
+    )
+    parser.add_argument(
+        "--cs-nt-decode-feature",
+        type=str,
+        default="combine",
+        choices = ["combine", "chn", "eng"],
+        help="feature used for decoding",
+    )
+    parser.add_argument(
+        "--cs-lang-weight",
+        type=float,
+        default="0.0",
+        help="weight of language classification loss",
+    )
+    parser.add_argument(
+        "--eng-vocab",
+        type=str,
+        default=None,
+        help="if apply, the hypothesis is valid only if all english words are in this vocab",
     )
     return parser
 
@@ -452,8 +469,8 @@ def main(args):
 
 
 if __name__ == "__main__":
-    tracemalloc.start(10000)
+    # tracemalloc.start(10000)
     main(sys.argv[1:])
-    size, peak = tracemalloc.get_traced_memory()
-    peak /= (1024 ** 2)
-    print(f"Maximum Memory consumed: {peak}MB")
+    # size, peak = tracemalloc.get_traced_memory()
+    # peak /= (1024 ** 2)
+    # print(f"Maximum Memory consumed: {peak}MB")

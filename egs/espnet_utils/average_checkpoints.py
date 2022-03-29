@@ -50,15 +50,16 @@ def main():
         sort_idx = np.argsort(val_scores[:, -1])
         sorted_val_scores = val_scores[sort_idx][::-1]
         print("metric: %s" % args.metric)
-        print("best val scores = " + str(sorted_val_scores[: args.num, 1]))
+        print("best val scores = " + str(sorted_val_scores[: int(args.num), 1]))
         print(
             "selected epochs = "
-            + str(sorted_val_scores[: args.num, 0].astype(np.int64))
+            + str(sorted_val_scores[: int(args.num), 0].astype(np.int64))
         )
         last = [
             os.path.dirname(args.snapshots[0]) + "/snapshot.ep.%d" % (int(epoch))
-            for epoch in sorted_val_scores[: args.num, 0]
+            for epoch in sorted_val_scores[: int(args.num), 0]
         ]
+        args.num = int(args.num)
     else:
         print(args.num)
         last = sorted(args.snapshots, key=lambda x: int(x.split(".")[-1]))

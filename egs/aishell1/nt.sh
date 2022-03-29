@@ -14,7 +14,6 @@ debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
-resume=        # Resume the training from snapshot
 debug=false
 
 # feature configuration
@@ -59,7 +58,8 @@ aux_mmi=true
 aux_mmi_weight=0.5
 aux_mmi_dropout_rate=0.1
 aux_mmi_type='mmi' # mmi or phonectc
-att_scorer_weight=0.0
+att_scorer_weight=0.0 # train an attention scorer for rescoring
+resume=
 
 # MBR training config
 aux_mbr=false
@@ -67,25 +67,26 @@ aux_mbr_weight=1.0
 aux_mbr_beam=4
 mbr_epochs=100
 mbr_lr=0.1
-mbr_warmup=8000
-mbr_resume=exp/train_sp_pytorch_8v100_ddp_rnnt_noaux/results_0/snapshot.ep.100
-# For second-stage training only. If false, only load the model weights but ignore chainer.trainer and optimizer state
-load_trainer_and_opt=false
+mbr_warmup=2500
+mbr_resume=
+
+master_port=22275
 
 # Decode config
 idx_average=91_100
 search_type="alsd" # "default", "nsc", "tsd", "alsd"
 mmi_weight=0.0 # MMI / phonectc joint decoding
+mas_lookahead=0 # MMI Alignment look-ahead frames
 ctc_weight=0.0 # char ctc joint decoding
 ngram_order=4
 ngram_weight=0.0
 lm_weight=0.0
 word_ngram_weight=0.0
-word_ngram_order=3
+word_ngram_tag=word_3gram_wbdiscount
 word_ngram_log_semiring=true
-mmi_type="frame" # or rescore
 beam_size=10
 recog_set="test dev"
+max_job=144
 
 . utils/parse_options.sh || exit 1;
 
@@ -123,7 +124,8 @@ if [ $aux_mbr == true ]; then
                 --epochs $mbr_epochs \
                 --transformer-warmup-steps $mbr_warmup \
                 --resume $mbr_resume \
-                --load-trainer-and-opt $load_trainer_and_opt \
+                --load-trainer-and-opt false \
+                --save-interval-iters 1000 \
                 "
     export OMP_NUM_THREADS=6 # for on-the-fly decoding
 fi
@@ -132,12 +134,12 @@ decode_opts=\
 "\
 --search-type $search_type \
 --mmi-weight $mmi_weight \
+--mas-lookahead $mas_lookahead \
 --beam-size $beam_size \
 --ctc-weight $ctc_weight \
---mmi-type $mmi_type \
 --ngram-weight $ngram_weight \
 --word-ngram-weight $word_ngram_weight \
---word-ngram data/word_${word_ngram_order}gram \
+--word-ngram data/$word_ngram_tag \
 --word-ngram-log-semiring ${word_ngram_log_semiring} \
 --lm-weight $lm_weight \
 "
@@ -159,9 +161,9 @@ feat_tr_dir=${dumpdir}/${train_set}/delta${do_delta}; mkdir -p ${feat_tr_dir}
 feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     echo "stage 1: Network Training"
-
+    
     # make sure in jizhi config file: "exec_start_in_all_mpi_pods": true, 
-    MASTER_PORT=22277
+    MASTER_PORT=$master_port
     NCCL_DEBUG=TRACE python3 -m torch.distributed.launch \
         --nproc_per_node ${HOST_GPU_NUM} --master_port $MASTER_PORT \
         --nnodes=${HOST_NUM} --node_rank=${INDEX} --master_addr=${CHIEF_IP} \
@@ -190,7 +192,7 @@ fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "stage 2: Decoding"
-    nj=188
+    nj=500
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
@@ -198,13 +200,13 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
         recog_model=model.last${idx_average}.avg.best
         average_checkpoints.py --backend ${backend} \
          		       --snapshots ${expdir}/results_0/snapshot.ep.* \
-         		       --out ${expdir}/results_0/${recog_model} \
-        		       --num ${idx_average}
+          		       --out ${expdir}/results_0/${recog_model} \
+         		       --num ${idx_average}
     fi
 
+    decode_parent_dir=decode_mmi${mmi_weight}_${word_ngram_tag}${word_ngram_weight}_lookahead${mas_lookahead}_beam${beam_size}_${idx_average}
     for rtask in ${recog_set}; do
-    
-        decode_dir=decode_${rtask}_ctc${ctc_weight}_mmi${mmi_weight}_${ngram_order}ngram${ngram_weight}_${word_ngram_order}wngram${word_ngram_weight}_log${word_ngram_log_semiring}_lm${lm_weight}
+        decode_dir=$decode_parent_dir/$rtask 
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data

@@ -192,7 +192,6 @@ class TransformerLM(nn.Module, LMInterface, BatchScorerInterface):
 
         """
         y = y.unsqueeze(0)
-
         if self.embed_drop is not None:
             emb = self.embed_drop(self.embed(y))
         else:
@@ -204,6 +203,16 @@ class TransformerLM(nn.Module, LMInterface, BatchScorerInterface):
         h = self.decoder(h[:, -1])
         logp = h.log_softmax(dim=-1).squeeze(0)
         return logp, cache
+
+    def score_partial(
+        self, y: torch.Tensor, next_tokens: Any, state: Any, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, Any]:
+        scores, state = self.score(y, state, x)
+        scores = scores[next_tokens]
+        return scores, state
+
+    def select_state(self, states, i):
+        return states
 
     # batch beam search API (see BatchScorerInterface)
     def batch_score(

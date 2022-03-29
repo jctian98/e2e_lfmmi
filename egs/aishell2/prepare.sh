@@ -21,7 +21,7 @@ resume=        # Resume the training from snapshot
 do_delta=false
 
 train_config=conf/train.yaml
-lm_config=conf/lm.yaml
+lm_config=conf/lm_rnn.yaml
 decode_config=conf/decode.yaml
 
 # rnnlm related
@@ -195,7 +195,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     local/k2_prepare_lang.sh --position-dependent-phones false data/local/dict \
       "<UNK>" data/local/lang_tmp_nosp $lang || exit 1
 
-    # use jieba for segmentation. This would take a few minutes
+    # use jieba for segmentation used in MMI. This would take a few minutes
     python3 local/jieba_build_dict.py $lang/words.txt $lang/jieba_dict.txt
     for part in train_sp dev_android dev_ios dev_mic test_android test_ios test_mic; do
         python3 local/jieba_split_text.py data/${part}/text data/${part}/text_orig.scp $lang/jieba_dict.txt
@@ -281,24 +281,57 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         > ${lmdatadir}/train.txt
     text2token.py -s 1 -n 1 data/${train_dev}/text | cut -f 2- -d" " \
         > ${lmdatadir}/valid.txt
+    mkdir -p ${lmexpdir}/results
 
-    #${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
-    #    lm_train.py \
-    #    --config ${lm_config} \
-    #    --ngpu $ngpu \
-    #    --backend ${backend} \
-    #    --verbose ${verbose} \
-    #    --outdir ${lmexpdir}/results \
-    #    --tensorboard-dir ${lmexpdir}/tensorboard \
-    #    --train-label ${lmdatadir}/train.txt \
-    #    --valid-label ${lmdatadir}/valid.txt \
-    #    --resume ${lm_resume} \
-    #    --dict ${dict}
-
+    ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
+        lm_train.py \
+        --config ${lm_config} \
+        --ngpu 4 \
+        --backend ${backend} \
+        --verbose ${verbose} \
+        --outdir ${lmexpdir}/results \
+        --tensorboard-dir ${lmexpdir}/tensorboard \
+        --train-label ${lmdatadir}/train.txt \
+        --valid-label ${lmdatadir}/valid.txt \
+        --resume ${lm_resume} \
+        --dict ${dict}
+ 
     ngramexpdir=exp/train_ngram
     lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
     build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
 
 fi
 
+# Prepare these word N-gram LMs for SPL response
+# (1) use different smooth method
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    # 3-gram LM with different smooth
+    for sm in -wbdiscount -kndiscount -ukndiscount -ndiscount; do
+        bash espnet_utils/train_lms_srilm.sh \
+          --unk "<UNK>" --lm-opts $sm data/local/dict/lexicon.txt \
+          data/local/lm/trans.txt data/local/lm$sm
+    done
 
+    # good-tuning
+    bash espnet_utils/train_lms_srilm.sh \
+      --unk "<UNK>" data/local/dict/lexicon.txt \
+      data/local/lm/trans.txt data/local/lm-gtdiscount
+
+    # build k2 directory
+    for tag in wbdiscount kndiscount ukndiscount ndiscount gtdiscount; do
+        mkdir -p data/word_3gram_$tag; lmdir=data/word_3gram_$tag
+        gunzip -c data/local/lm-$tag/srilm/srilm.o3g.kn.gz \
+          > $lmdir/lm.arpa
+
+        cp $lang/words.txt $lmdir
+        cp $lang/oov.int $lmdir
+
+        python3 -m kaldilm \
+            --read-symbol-table="$lmdir/words.txt" \
+            --disambig-symbol='#0' \
+            --max-order=3 \
+            $lmdir/lm.arpa > $lmdir/G.fst.txt
+
+        python3 espnet/nets/scorers/word_ngram.py $lmdir
+    done
+fi

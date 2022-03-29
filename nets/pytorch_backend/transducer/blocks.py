@@ -266,7 +266,9 @@ def build_input_layer(
         subsampling_factor (int): subsampling factor
 
     """
-    if pos_enc_class.__name__ == "RelPositionalEncoding":
+    if input_layer == "null":
+        return None, 1
+    elif pos_enc_class.__name__ == "RelPositionalEncoding":
         pos_enc_class_subsampling = pos_enc_class(odim, pos_dropout_rate)
     else:
         pos_enc_class_subsampling = None

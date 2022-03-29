@@ -11,6 +11,11 @@ import sys
 
 import sentencepiece as spm
 
+def is_all_chinese(strs):
+    for _char in strs:
+        if not '\u4e00' <= _char <= '\u9fa5':
+            return False
+    return True
 
 def main():
     parser = argparse.ArgumentParser()
@@ -36,12 +41,35 @@ def main():
         # remap reference-side <unk> (represented as <<unk>>) to 0
         return int(tok) if tok != "<<unk>>" else 0
 
+    def multilingual_decode(line):
+        def process_segment(buf):
+            segment = "".join(buf).split() # string of bpes
+            segment = decode(segment).split() # list of words
+            return segment
+
+        ans, buf = [], []
+        for c in line:
+            if is_all_chinese(c):
+                if buf:
+                    ans.extend(process_segment(buf))
+                    buf = []
+                ans.append(c)
+            else:
+                buf.append(c)
+        if buf:
+            ans.extend(process_segment(buf))
+
+        ans = " ".join(ans)
+        return ans
+                    
+
     if args.input is None:
         h = sys.stdin
     else:
         h = open(args.input, "r", encoding="utf-8")
     for line in h:
-        print(decode(line.split()))
+        print(multilingual_decode(line))
+        # print(decode(line.split()))
 
 
 if __name__ == "__main__":

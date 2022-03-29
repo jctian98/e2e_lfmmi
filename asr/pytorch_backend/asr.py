@@ -66,13 +66,13 @@ if sys.version_info[0] == 2:
 else:
     from itertools import zip_longest as zip_longest
 
-from espnet.nets.scorers.mmi_rescorer import MMIRescorer
 from espnet.nets.scorers.mmi_rnnt_scorer import MMIRNNTScorer
-from espnet.nets.scorers.ctc_rnnt_scorer import CTCRNNTScorer
-from espnet.nets.scorers.mmi_rnnt_lookahead_scorer import MMIRNNTLookaheadScorer
+# from espnet.nets.scorers.mmi_alignment_score import MMIRNNTScorer
 from espnet.utils.print import step_print
 from espnet.utils.sampler import BufferSampler
 from espnet.utils.rtf_calculator import RTF_calculator
+from espnet.nets.lm_interface import dynamic_import_lm
+
 
 def _recursive_to(xs, device):
     if torch.is_tensor(xs):
@@ -191,6 +191,7 @@ class CustomUpdater(StandardUpdater):
         self.iteration = 0
         self.use_apex = use_apex
         self.ddp_trainer = ddp_trainer
+        self.optimizer = optimizer
 
     # The core part of the update routine can be customized by overriding.
     def update_core(self):
@@ -203,7 +204,7 @@ class CustomUpdater(StandardUpdater):
 
         
         batch = train_iter.next()
-
+        
         x = _recursive_to(batch, self.device)
         is_new_epoch = train_iter.epoch != epoch
         
@@ -242,28 +243,20 @@ class CustomUpdater(StandardUpdater):
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), self.grad_clip_threshold
         )
-        logging.info("grad norm={}".format(grad_norm))
+        logging.info("on device {} grad norm={}".format(self.device, grad_norm))
         if math.isnan(grad_norm):
             logging.warning("grad norm is nan. Do not update model.")
+            self.ddp_trainer.optimizer.zero_grad()
         else:
             """
-            (1) the optimizer here is a SGD optimizer with constant lr 1.0
-                However, its .rate() feature returns the real learning rate 
-                of a Noam optimizer
-            (2) the ddp_trainer is an Adam optimizer. Its learning rate could
-                be schedule Outside
-            (3) Each time the local SGD optimizer update the model so the difference
-                of this model and previous model is identical the gradients.
-                Then these gradients are used to update the global model. 
-                This is then identical to the model parallel. However, it may lead
-                to inefficiency as two updates are conducted. (Local and global)
+            Optimizer is never used for update. 
+            The real updating process and the DDP communication is in 
+            this `update_and_sync()`
             """
-            optimizer.step()
-            self.ddp_trainer.set_block_lr(optimizer.rate())
+            # self.optimizer.step()
             self.ddp_trainer.update_and_sync()
-            flush = (self.iteration % 50 == 0)
-            step_print(f"| iteration: {self.iteration} | gradient applied", flush=flush)
-        optimizer.zero_grad()
+            if self.iteration % 1 == 0:
+                step_print(f"| iteration: {self.iteration} | gradient applied")
 
     def update(self):
         self.update_core()
@@ -471,9 +464,9 @@ def train(args):
             idim_list[0] if args.num_encs == 1 else idim_list, odim, args
         )
     assert isinstance(model, ASRInterface)
-    print(model)
     total_subsampling_factor = model.get_total_subsampling_factor()
 
+    print(model)
     logging.info(
         " Total parameter of the model = "
         + str(sum(p.numel() for p in model.parameters()))
@@ -525,17 +518,16 @@ def train(args):
     # set torch device 
     assert args.ngpu in [1, 0] # this is ddp version
     device = torch.device(f"cuda:{args.local_rank}" if args.ngpu > 0 else "cpu")
+    
     if args.train_dtype in ("float16", "float32", "float64"):
         dtype = getattr(torch, args.train_dtype)
     else:
         dtype = torch.float32
     model = model.to(device=device, dtype=dtype)
-
     if args.freeze_mods:
         model, model_params = freeze_modules(model, args.freeze_mods)
     else:
         model_params = model.parameters()
-
     logging.warning(
         "num. model params: {:,} (num. trained: {:,} ({:.1f}%))".format(
             sum(p.numel() for p in model.parameters()),
@@ -546,41 +538,10 @@ def train(args):
         )
     )
 
-    # Setup an optimizer
-    if args.opt == "adadelta":
-        optimizer = torch.optim.Adadelta(
-            model_params, rho=0.95, eps=args.eps, weight_decay=args.weight_decay
-        )
-    elif args.opt == "adam":
-        optimizer = torch.optim.Adam(model_params, weight_decay=args.weight_decay)
-    elif args.opt == "noam":
-        from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
-
-        # For transformer-transducer, adim declaration is within the block definition.
-        # Thus, we need retrieve the most dominant value (d_hidden) for Noam scheduler.
-        if hasattr(args, "enc_block_arch") or hasattr(args, "dec_block_arch"):
-            adim = model.most_dom_dim
-        else:
-            adim = args.adim
-
-        optimizer = get_std_opt(
-            model_params, adim, args.transformer_warmup_steps, args.transformer_lr
-        )
-    elif args.opt == "noam_sgd": # identical to noam but use sgd
-        from espnet.nets.pytorch_backend.transformer.sgd_optimizer import get_sgd_opt
-
-        # For transformer-transducer, adim declaration is within the block definition.
-        # Thus, we need retrieve the most dominant value (d_hidden) for Noam scheduler.
-        if hasattr(args, "enc_block_arch") or hasattr(args, "dec_block_arch"):
-            adim = model.most_dom_dim
-        else:
-            adim = args.adim
-
-        optimizer = get_sgd_opt(
-            model_params, adim, args.transformer_warmup_steps, args.transformer_lr
-        )
-    else:
-        raise NotImplementedError("unknown optimizer: " + args.opt)
+    # We build the SGD optimizer but never use it.
+    # Other code needs this
+    # The real optimizer is in ddp_trainer
+    optimizer = torch.optim.SGD(model_params, lr=1.0)
 
     # setup apex.amp
     if args.train_dtype in ("O0", "O1", "O2", "O3"):
@@ -721,14 +682,15 @@ def train(args):
         num_workers=args.n_iter_processes,
     )
 
-    print(f"Global Rank: {global_rank} Dataloader ready!", flush=True)
+    
     # Set up a trainer
-    ddp_trainer = BlockAdamTrainer(master_node=args.master_node,
+    ddp_trainer = BlockAdamTrainer(args,
+                                   master_node=args.master_node,
                                    rank=global_rank,
                                    world_size=args.world_size,
                                    model=model,
-                                   block_lr=1.0)
-    print(f"Global Rank: {global_rank} DDP trainer ready!", flush=True)
+    )
+    
     updater = CustomUpdater(
         model,
         args.grad_clip,
@@ -753,10 +715,6 @@ def train(args):
     if args.resume:
         logging.info("resumed from %s" % args.resume)
         torch_resume(args.resume, trainer, args.load_trainer_and_opt)
-        # Global model should also resumed from local model
-        # this may be problematic, as the global optimizer
-        # state could be missed
-        ddp_trainer.reset_model(model) 
 
     # Evaluate the model with the test dataset for each epoch
     if args.save_interval_iters > 0:
@@ -857,6 +815,8 @@ def train(args):
                     "validation/main/loss_mbr",
                     "main/loss_mmi",
                     "validation/main/loss_mmi",
+                    "main/loss_lang",
+                    "validation/main/loss_lang",
                     "main/loss_att",
                     "validation/main/loss_att",
                 ],
@@ -874,6 +834,10 @@ def train(args):
                     "validation/main/loss_ctc",
                     "main/loss_att",
                     "validation/main/loss_att",
+                    "main/loss_third",
+                    "validation/main/loss_third",
+                    "main/loss_mbr",
+                    "validation/main/loss_mbr",
                 ]
                 + ([] if args.num_encs == 1 else report_keys_loss_ctc),
                 "epoch",
@@ -985,6 +949,7 @@ def train(args):
             "main/loss_mbr",
             "main/loss_mmi",
             "main/loss_att",
+            "main/loss_lang",
             "validation/main/loss",
             "validation/main/loss_trans",
             "validation/main/loss_ctc",
@@ -994,6 +959,7 @@ def train(args):
             "validation/main/loss_mbr",
             "validation/main/loss_mmi",
             "validation/main/loss_att",
+            "validation/main/loss_lang",
             "elapsed_time",
         ]
     else:
@@ -1003,9 +969,13 @@ def train(args):
             "main/loss",
             "main/loss_ctc",
             "main/loss_att",
+            "main/loss_third",
+            "main/loss_mbr",
             "validation/main/loss",
             "validation/main/loss_ctc",
             "validation/main/loss_att",
+            "validation/main/loss_third",
+            "validation/main/loss_mbr",
             "main/acc",
             "validation/main/acc",
             "main/cer_ctc",
@@ -1072,20 +1042,23 @@ def recog(args):
     )
 
     # read rnnlm
-    if args.rnnlm:
+    if args.rnnlm and args.lm_weight > 0.0:
         rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
-        if getattr(rnnlm_args, "model_module", "default") != "default":
-            raise ValueError(
-                "use '--api v2' option to decode with non-default language model"
+        if getattr(rnnlm_args, "model_module", "default") == "default":
+            rnnlm = lm_pytorch.ClassifierWithState(
+                lm_pytorch.RNNLM(
+                    len(train_args.char_list),
+                    rnnlm_args.layer,
+                    rnnlm_args.unit,
+                    getattr(rnnlm_args, "embed_unit", None),  # for backward compatibility
+                )
             )
-        rnnlm = lm_pytorch.ClassifierWithState(
-            lm_pytorch.RNNLM(
-                len(train_args.char_list),
-                rnnlm_args.layer,
-                rnnlm_args.unit,
-                getattr(rnnlm_args, "embed_unit", None),  # for backward compatibility
-            )
-        )
+        elif getattr(rnnlm_args, "model_module", "default") == "transformer":
+            lm_class = dynamic_import_lm("transformer", rnnlm_args.backend)
+            rnnlm = lm_class(len(train_args.char_list), rnnlm_args)
+        else:
+            raise ValueError("Unsupported LM type")
+
         torch_load(args.rnnlm, rnnlm)
         rnnlm.eval()
     else:
@@ -1145,42 +1118,25 @@ def recog(args):
         else:
             trans_decoder = model.decoder
         joint_network = model.joint_network
-      
-        # aux LF-MMI or CTC for decoding
-        # args.mmi_weight == 0.0 could be the rescorer 
-        if train_args.aux_mmi and (args.mmi_weight > 0.0 or args.mmi_type == "rescore"):
+     
+        # We only use the MMIRNNTScorer now 
+        if train_args.aux_mmi and train_args.aux_mmi_type == "mmi":
             adim = train_args.enc_block_arch[0]['d_hidden']
-            model.aux_mmi.dump_weight(args.local_rank)
-            print("Using MMI scorer type: ", args.mmi_type)
+            weight_path = os.path.dirname(args.result_label) + "/dump" 
+            os.makedirs(weight_path, exist_ok=True)
+            model.aux_mmi.dump_weight(args.local_rank, weight_path)
 
-            if train_args.aux_mmi_type == "mmi":
-                if args.mmi_type == "rescore":
-                    mmi_scorer_module = MMIRescorer
-                elif args.mmi_type == "lookahead":
-                    mmi_scorer_module = MMIRNNTLookaheadScorer
-                elif args.mmi_type == "frame":
-                    mmi_scorer_module = MMIRNNTScorer
-                else:
-                    raise NotImplementedError
-            
-            elif train_args.aux_mmi_type == "phonectc":
-                if args.mmi_type == "rescore":
-                    raise NotImplementedError
-                elif args.mmi_type == "lookahead":
-                    raise NotImplementedError
-                elif args.mmi_type == "frame":
-                    mmi_scorer_module = CTCRNNTScorer
-                else:
-                    raise NotImplementedError
-
-            print("MMI Scorer Module: ", mmi_scorer_module)
+            mmi_scorer_module = MMIRNNTScorer
             mmi_scorer = mmi_scorer_module(lang=model.aux_mmi.lang,
                                        device=device,
                                        idim=adim,
                                        sos_id=model.sos,
                                        rank=args.local_rank,
                                        use_segment=args.use_segment,
-                                       char_list=train_args.char_list) 
+                                       char_list=train_args.char_list,
+                                       weight_path=weight_path,
+                                       lookahead=args.mas_lookahead,
+                                       ) 
         else:
             mmi_scorer = None
 
@@ -1209,8 +1165,16 @@ def recog(args):
         else:
             tlg_scorer = None
 
-        # joint beam search with CTC distribution
-        ctc_module = model.aux_ctc if model.use_aux_ctc else None
+        # for code-switch data
+        if args.cs_nt_decode_feature in ["chn", "eng"]:
+            ctc_module = getattr(model, "aux_ctc", None)
+        else:
+            ctc_module = getattr(model, "decoder_ctc", None)
+
+        if args.eng_vocab is not None and os.path.isfile(args.eng_vocab):
+            eng_vocab = [s.strip() for s in open(args.eng_vocab, encoding="utf-8").readlines()]
+        else:
+            eng_vocab = None
 
         beam_search_transducer = BeamSearchTransducer(
             decoder=trans_decoder,
@@ -1228,8 +1192,6 @@ def recog(args):
             score_norm=args.score_norm,
             mmi_scorer=mmi_scorer,
             mmi_weight=args.mmi_weight,
-            ctc_module=ctc_module,
-            ctc_weight=args.ctc_weight,
             ngram_scorer=ngram_scorer,
             ngram_weight=args.ngram_weight,
             word_ngram_scorer=word_ngram_scorer,
@@ -1237,6 +1199,9 @@ def recog(args):
             tlg_scorer=tlg_scorer,
             tlg_weight=args.tlg_weight,
             forbid_eng=args.forbid_eng,
+            ctc_module=ctc_module,
+            ctc_weight=args.ctc_weight,
+            eng_vocab=eng_vocab
         )
 
     if args.k2_decode:
@@ -1309,7 +1274,8 @@ def recog(args):
                                 nbest_hyps[n]["yseq"].extend(hyps[n]["yseq"])
                                 nbest_hyps[n]["score"] += hyps[n]["score"]
                 elif hasattr(model, "is_rnnt"):
-                    nbest_hyps = model.recognize(feat, beam_search_transducer)
+                    nbest_hyps = model.recognize(feat, beam_search_transducer,
+                                                 decode_feature=args.cs_nt_decode_feature)
                 else:
                     nbest_hyps = model.recognize(
                         feat, args, train_args.char_list, rnnlm

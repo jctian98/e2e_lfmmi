@@ -156,4 +156,25 @@ def add_arguments_transformer_common(group):
     group.add_argument(
         "--dunits", default=320, type=int, help="Number of decoder hidden units"
     )
+
+    # MBR 
+    group.add_argument(
+        "--aux-mbr",
+        type=strtobool,
+        nargs="?",
+        default=False,
+        help="Whether to use mbr as auxiliary task.",
+    )
+    group.add_argument(
+        "--aux-mbr-weight",
+        default=1.0,
+        type=float,
+        help="Weight of auxiliary mbr loss",
+    )
+    group.add_argument(
+        "--aux-mbr-beam",
+        default=2,
+        type=int,
+        help="Number of hypothesis for MBR loss computation",
+    )
     return group

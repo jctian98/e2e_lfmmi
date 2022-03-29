@@ -43,7 +43,7 @@ class Hypothesis(NamedTuple):
         return ans
 
 
-class BeamSearch(torch.nn.Module):
+class BeamSearch(object):
     """Beam search implementation."""
 
     def __init__(
@@ -330,9 +330,9 @@ class BeamSearch(torch.nn.Module):
             for k in self.part_scorers:
                 weighted_scores[part_ids] += self.weights[k] * part_scores[k]
             # Show the scores step by step
-            parse_step(hyp, self.token_list, part_ids,
-                       self.weights, scores,
-                       part_scores, weighted_scores)
+            # parse_step(hyp, self.token_list, part_ids,
+            #            self.weights, scores,
+            #            part_scores, weighted_scores)
             weighted_scores += hyp.score
 
             # update hyps
@@ -354,7 +354,7 @@ class BeamSearch(torch.nn.Module):
             ]
         return best_hyps
 
-    def forward(
+    def __call__(
         self, x: torch.Tensor, maxlenratio: float = 0.0, minlenratio: float = 0.0
     ) -> List[Hypothesis]:
         """Perform beam search.
@@ -384,7 +384,7 @@ class BeamSearch(torch.nn.Module):
         running_hyps = self.init_hyp(x)
         ended_hyps = []
         for i in range(maxlen):
-            print(f"######### Iteration {i} #########")
+            # print(f"######### Iteration {i} #########")
             logging.debug("position " + str(i))
             best = self.search(running_hyps, x)
 
@@ -405,10 +405,10 @@ class BeamSearch(torch.nn.Module):
                 logging.debug(f"remained hypotheses: {len(running_hyps)}")
 
         nbest_hyps = sorted(ended_hyps, key=lambda x: x.score, reverse=True)
-        print("#" * 20, "Details of Final Best Hypothesis", "#" * 20)
-        for h in nbest_hyps:
-            print("Hypothesis: " + "".join([self.token_list[x] for x in h.yseq[1:-1]]))
-            print(h, flush=True)
+        # print("#" * 20, "Details of Final Best Hypothesis", "#" * 20)
+        # for h in nbest_hyps:
+        #     print("Hypothesis: " + "".join([self.token_list[x] for x in h.yseq[1:-1]]))
+        #     print(h, flush=True)
         # check the number of hypotheses reaching to eos
         if len(nbest_hyps) == 0:
             logging.warning(
@@ -436,7 +436,7 @@ class BeamSearch(torch.nn.Module):
                 + "".join([self.token_list[x] for x in best.yseq[1:-1]])
                 + "\n"
             )
-        print("Start MMI rescoring", flush=True)
+        # print("Start MMI rescoring", flush=True)
         if self.mmi_rescorer:
             nbest_hyps = self.mmi_rescorer.score(x, nbest_hyps, v2=True)
 

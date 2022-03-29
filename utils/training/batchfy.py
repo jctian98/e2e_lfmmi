@@ -1,8 +1,7 @@
 import itertools
 import logging
-
 import numpy as np
-
+import random
 
 def batchfy_by_seq(
     sorted_data,
@@ -456,10 +455,11 @@ def make_batchset(
             continue
 
         # sort it by input lengths (long to short)
+        # add a random float in (0, 1) to shuffle multilingual data with the same length
         if not no_sort:
             sorted_data = sorted(
                 d.items(),
-                key=lambda data: int(data[1][batch_sort_key][batch_sort_axis]["shape"][0]),
+                key=lambda data: int(data[1][batch_sort_key][batch_sort_axis]["shape"][0]) + random.random(),
                 reverse=not shortest_first,
             )
         else:

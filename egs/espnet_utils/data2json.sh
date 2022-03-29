@@ -95,7 +95,7 @@ if [ -n "${bpecode}" ]; then
             > ${tmpdir}/output/token.scp
     else
         paste -d " " <(awk '{print $1}' ${text}) <(cut -f 2- -d" " ${text} \
-            | spm_encode --model=${bpecode} --output_format=piece) \
+            | spm_encode --model=${bpecode} --output_format=piece --split-chn) \
             > ${tmpdir}/output/token.scp
     fi
 elif [ -n "${nlsyms}" ]; then

@@ -45,7 +45,6 @@ class CustomEncoder(torch.nn.Module):
     ):
         """Construct an CustomEncoder object."""
         super().__init__()
-
         (
             self.embed,
             self.encoders,
@@ -74,7 +73,7 @@ class CustomEncoder(torch.nn.Module):
 
         self.aux_task_layer_list = aux_task_layer_list
 
-    def forward(self, xs, masks):
+    def forward(self, xs, masks, return_as_intermidiate=False):
         """Encode input sequence.
 
         Args:
@@ -88,7 +87,9 @@ class CustomEncoder(torch.nn.Module):
             mask (torch.Tensor): position embedded mask
 
         """
-        if isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
+        if self.embed is None:
+            xs, masks = xs, masks
+        elif isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
             xs, masks = self.embed(xs, masks)
         else:
             xs = self.embed(xs)
@@ -111,6 +112,10 @@ class CustomEncoder(torch.nn.Module):
                         aux_xs_list.append(aux_xs)
         else:
             xs, masks = self.encoders(xs, masks)
+
+        # we keep the pos_emb for layer conformer layers
+        if return_as_intermidiate:
+            return xs, masks
 
         if isinstance(xs, tuple):
             xs = xs[0]

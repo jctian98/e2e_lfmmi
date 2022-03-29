@@ -17,11 +17,11 @@ from espnet.nets.scorer_interface import BatchScorerInterface
 from espnet.nets.scorers.length_bonus import LengthBonus
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.io_utils import LoadInputsAndTargets
-from espnet.nets.scorers.mmi_lookahead import MMILookaheadScorer
 from espnet.nets.scorers.mmi_frame_scorer import MMIFrameScorer
+# from espnet.nets.scorers.mmi_prefix_score import MMIFrameScorer
 from espnet.nets.scorers.ctc import CTCPrefixScorer
-from espnet.nets.scorers.mmi_rescorer import MMIRescorer
 from espnet.nets.scorers.word_ngram import WordNgramPartialScorer
+from espnet.nets.scorers.mmi_rescorer import MMIRescorer
 from espnet.utils.rtf_calculator import RTF_calculator
 
 def recog_v2(args):
@@ -97,21 +97,25 @@ def recog_v2(args):
         # Also make sure it is K2MMI
         assert hasattr(model.ctc, "dump_weight")
         # Dump a pth for each rank to avoid conflits when reading / writing
-        model.ctc.dump_weight(args.local_rank)
-        print(f"Using MMI scorer type: {args.mmi_type}")
-        mmi_scorer = MMIFrameScorer if args.mmi_type == "frame" else MMILookaheadScorer
+        weight_path = os.path.dirname(args.result_label) + "/dump"
+        os.makedirs(weight_path, exist_ok=True)
+        model.ctc.dump_weight(args.local_rank, weight_path)
+        mmi_scorer = MMIFrameScorer
         mmi = mmi_scorer(lang=model.ctc.lang,
                          device=device,
                          idim=train_args.adim,
                          sos_id=model.sos,
                          rank=args.local_rank,
                          use_segment=args.use_segment,
-                         char_list=train_args.char_list)
+                         char_list=train_args.char_list, 
+                         weight_path=weight_path)
     else:
         mmi = None
 
     if args.mmi_rescore:
-        model.ctc.dump_weight(args.local_rank)
+        weight_path = os.path.dirname(args.result_label) + "/dump"
+        os.makedirs(weight_path, exist_ok=True)
+        model.ctc.dump_weight(args.local_rank, weight_path)
         assert args.mmi_weight <= 0.0
         mmi_rescorer = MMIRescorer(lang=model.ctc.lang,
                                    device=device,
@@ -119,7 +123,8 @@ def recog_v2(args):
                                    sos_id=model.sos,
                                    rank=args.local_rank,
                                    use_segment=args.use_segment,
-                                   char_list=train_args.char_list)
+                                   char_list=train_args.char_list,
+                                   weight_path=weight_path)
     else:
         mmi_rescorer = None
 
@@ -185,7 +190,7 @@ def recog_v2(args):
     dtype = getattr(torch, args.dtype)
     logging.info(f"Decoding device={device}, dtype={dtype}")
     model.to(device=device, dtype=dtype).eval()
-    beam_search.to(device=device, dtype=dtype).eval()
+    # beam_search.to(device=device, dtype=dtype).eval()
 
     # read json data
     with open(args.recog_json, "rb") as f:

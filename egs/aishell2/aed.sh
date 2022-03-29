@@ -51,6 +51,15 @@ ctc_type="k2mmi" # k2mmi k2ctc builtin
 mtlalpha=0.3
 third_weight=0.3
 
+# MBR training config
+aux_mbr=false
+aux_mbr_weight=1.0
+aux_mbr_beam=4
+mbr_epochs=100
+mbr_lr=0.1
+mbr_warmup=2500
+mbr_resume=
+
 # Decode config
 idx_average=41_50
 mmi_weight=0.0 # MMI / phonectc joint decoding
@@ -58,12 +67,11 @@ ctc_weight=0.5 # char ctc joint decoding
 ngram_weight=0.0
 ngram_order=4
 word_ngram_weight=0.0
-word_ngram_order=3 # 3 or 4 gram
+word_ngram_tag=word_3gram_wbdiscount # 3 or 4 gram
 word_ngram_log_semiring=true
 lm_weight=0.0
 mmi_rescore=false # or rescore
 beam_size=10
-mmi_type="frame"
 recog_set="test_android test_ios test_mic"
 
 . utils/parse_options.sh || exit 1;
@@ -88,16 +96,30 @@ train_opts=\
 --third-weight $third_weight \
 "
 
+if [ $aux_mbr == true ]; then
+    train_opts="$train_opts \
+                --aux-mbr $aux_mbr \
+                --aux-mbr-weight $aux_mbr_weight \
+                --aux-mbr-beam $aux_mbr_beam \
+                --transformer-lr $mbr_lr \
+                --epochs $mbr_epochs \
+                --transformer-warmup-steps $mbr_warmup \
+                --resume $mbr_resume \
+                --load-trainer-and-opt false \
+                --save-interval-iters 1000 \
+                "
+    export OMP_NUM_THREADS=6 # for on-the-fly decoding
+fi
+
 decode_opts=\
 "\
 --mmi-weight $mmi_weight \
 --mmi-rescore $mmi_rescore \
 --beam-size $beam_size \
 --ctc-weight $ctc_weight \
---mmi-type $mmi_type \
 --ngram-weight $ngram_weight \
 --word-ngram-weight $word_ngram_weight \
---word-ngram data/word_${word_ngram_order}gram \
+--word-ngram data/${word_ngram_tag} \
 --word-ngram-log-semiring $word_ngram_log_semiring \
 --lm-weight $lm_weight \
 "
@@ -136,7 +158,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         --minibatches ${N} \
         --verbose ${verbose} \
         --resume ${resume} \
-        --train-json ${feat_tr_dir}/split${ngpu}utt/data.RANK.json \
+        --train-json ${feat_tr_dir}/split${ngpu}utt/data_noeng.RANK.json \
         --valid-json ${feat_dt_dir}/data.json \
         --lang $lang \
         --opt "noam_sgd" \
@@ -149,7 +171,7 @@ fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "stage 2: Decoding"
-    nj=188
+    nj=1000
     recog_model=model.last${idx_average}.avg.best
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
@@ -162,8 +184,9 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 			       --num ${idx_average}
     fi
 
+    decode_parent_dir=decode_mmi${mmi_weight}_${word_ngram_tag}${word_ngram_weight}_ctc${ctc_weight}_ep${idx_average}_beam${beam_size}
     for rtask in ${recog_set}; do
-        decode_dir=decode_${rtask}_ctc${ctc_weight}_mmi${mmi_weight}_${ngram_order}ngram${ngram_weight}_${word_ngram_order}wngram${word_ngram_weight}_log${word_ngram_log_semiring}_lm${lm_weight}
+        decode_dir=$decode_parent_dir/$rtask
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data
@@ -181,8 +204,8 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results_0/${recog_model}  \
             --ngram-model exp/train_ngram/${ngram_order}gram.bin \
-            --rnnlm exp/train_rnnlm_pytorch_lm/results/rnnlm.model.best \
-            --rnnlm-conf exp/train_rnnlm_pytorch_lm/results/model.json \
+            --rnnlm exp/train_rnnlm_pytorch_lm_transformer/results/rnnlm.model.best \
+            --rnnlm-conf exp/train_rnnlm_pytorch_lm_transformer/results/model.json \
             --api v2 \
             --local-rank JOB $decode_opts  
 

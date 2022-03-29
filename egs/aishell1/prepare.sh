@@ -22,7 +22,7 @@ do_delta=false
 
 preprocess_config=conf/specaug.yaml
 train_config=conf/train.yaml
-lm_config=conf/lm.yaml
+lm_config=conf/lm_rnn.yaml
 decode_config=conf/decode.yaml
 
 # rnnlm related
@@ -183,18 +183,18 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         > ${lmdatadir}/valid.txt
 
     # NNLM. by default you do not need this
-    #${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
-    #    lm_train.py \
-    #    --config ${lm_config} \
-    #    --ngpu ${ngpu} \
-    #    --backend ${backend} \
-    #    --verbose 1 \
-    #    --outdir ${lmexpdir} \
-    #    --tensorboard-dir tensorboard/${lmexpname} \
-    #    --train-label ${lmdatadir}/train.txt \
-    #    --valid-label ${lmdatadir}/valid.txt \
-    #    --resume ${lm_resume} \
-    #    --dict ${dict}
+    ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
+        lm_train.py \
+        --config ${lm_config} \
+        --ngpu 1 \
+        --backend ${backend} \
+        --verbose 1 \
+        --outdir ${lmexpdir} \
+        --tensorboard-dir tensorboard/${lmexpname} \
+        --train-label ${lmdatadir}/train.txt \
+        --valid-label ${lmdatadir}/valid.txt \
+        --resume ${lm_resume} \
+        --dict ${dict}
 
     # prepare character-level N-gram LM. You need kenlm to run this  
     # lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
@@ -225,4 +225,48 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         data/word_${order}gram/lm.arpa > data/word_${order}gram/G.fst.txt
     
     done
+fi
+
+# Prepare these word N-gram LMs for SPL response
+# (1) use different smooth method
+# (2) use jieba rather than the ground-truth transcription
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    # 3-gram LM with different smooth
+    for sm in -wbdiscount -kndiscount -ukndiscount -ndiscount; do
+        bash espnet_utils/train_lms_srilm.sh \
+          --unk "<UNK>" --lm-opts $sm data/local/dict_nosp/lexicon.txt \
+          data/local/train/text data/local/lm$sm  
+    done
+
+    # gtdiscount
+    bash espnet_utils/train_lms_srilm.sh \
+          --unk "<UNK>" data/local/dict_nosp/lexicon.txt \
+          data/local/train/text data/local/lm-gtdiscount
+
+    # word segmentation by jieba
+    python3 espnet_utils/jieba_build_dict.py $lang/words.txt $lang/jieba_dict.txt
+    python3 espnet_utils/text_norm.py --in-f data/train/text \
+      --out-f data/local/train/text.jieba --segment
+    bash espnet_utils/train_lms_srilm.sh \
+      --unk "<UNK>" data/local/dict_nosp/lexicon.txt \
+      data/local/train/text.jieba data/local/lm-jieba
+
+    # build k2 directory
+    for tag in wbdiscount kndiscount ukndiscount ndiscount gtdiscount jieba; do
+        mkdir -p data/word_3gram_$tag; lmdir=data/word_3gram_$tag
+        gunzip -c data/local/lm-$tag/srilm/srilm.o3g.kn.gz \
+          > $lmdir/lm.arpa
+
+        cp $lang/words.txt $lmdir
+        cp $lang/oov.int $lmdir
+
+        python3 -m kaldilm \
+            --read-symbol-table="$lmdir/words.txt" \
+            --disambig-symbol='#0' \
+            --max-order=3 \
+            $lmdir/lm.arpa > $lmdir/G.fst.txt
+
+        python3 espnet/nets/scorers/word_ngram.py $lmdir
+    done
+    
 fi

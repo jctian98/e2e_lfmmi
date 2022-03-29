@@ -50,14 +50,28 @@ def splice(s):
     ans = " ".join(ans)
     return ans
 
+digit_dict = {"0": "零",
+              "1": "一",
+              "2": "二",
+              "3": "三",
+              "4": "四",
+              "5": "五",
+              "6": "六",
+              "7": "七",
+              "8": "八",
+              "9": "九",}
 def digit_norm(s):
     out = ""
     buf = ""
     for c in s:
         if not c.isdigit():
             if buf:
-                buf = cn2an.an2cn(buf)
-                out += buf
+                try:
+                    digit_str = cn2an.an2cn(buf)
+                except:
+                    print(f"cannot convert digit {buf}")
+                    digit_str = "".join([digit_dict.get(x, "") for x in buf])
+                out += digit_str
                 buf = ""
             out += c
         else:
@@ -77,7 +91,8 @@ def remove_blank_chn(s):
         else:
             a = is_all_chinese(s[i-1])
             b = is_all_chinese(s[i+1])
-            if not a and not b:
+            # if not a and not b: 
+            if not a or not b: # keep chn-eng <space> 
                 out += s[i]
     return out
 
@@ -105,7 +120,17 @@ def split_eng_words(s):
             for c in w:
                 out.append(c)
     out = " ".join(out)
-    return out 
+    return out
+
+def split_chn_words(s):
+    out = []
+    for w in s.strip().split():
+        if is_all_chinese(w):
+            out.extend(list(w))
+        else:
+            out.extend(w.split())
+    out = " ".join(out)
+    return out
 
 def upper_or_lower(s, upper=True):
     if upper:
@@ -130,6 +155,10 @@ def process_one_line(content, args):
     # (4) remove all blank except those between eng words
     #     This is for kaldi/text
     content = remove_blank_chn(content)
+    
+    if args.segment_chn:
+        content = split_chn_words(content) 
+
     if not args.segment:
         return content
 
@@ -164,6 +193,8 @@ def get_parser():
         "--segment", action='store_true', help="do segmentation in output file")
     parser.add_argument(
         "--segment-eng", action='store_true', help="segment english into chars")
+    parser.add_argument(
+        "--segment-chn", action='store_true', help="segment mandarin into chars")
     parser.add_argument(
         "--ignore", type=str, default=None, help="symbol to remove in output file")
     parser.add_argument(

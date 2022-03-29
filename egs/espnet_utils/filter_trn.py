@@ -2,7 +2,7 @@
 import sys
 
 in_f = sys.argv[1]
-ignore = sys.argv[2]
+ignore = "叮 当 叮 当 "
 
 for line in open(in_f, encoding="utf-8"):
     line = line.strip().replace(ignore, "")

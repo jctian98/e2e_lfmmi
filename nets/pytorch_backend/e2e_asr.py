@@ -43,10 +43,12 @@ CTC_LOSS_THRESHOLD = 10000
 class Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
 
-    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss):
+    def report(self, loss_ctc, loss_att, loss_third, loss_mbr, acc, cer_ctc, cer, wer, mtl_loss):
         """Report at every step."""
         reporter.report({"loss_ctc": loss_ctc}, self)
         reporter.report({"loss_att": loss_att}, self)
+        reporter.report({"loss_third": loss_third}, self)
+        reporter.report({"loss_mbr": loss_mbr}, self)
         reporter.report({"acc": acc}, self)
         reporter.report({"cer_ctc": cer_ctc}, self)
         reporter.report({"cer": cer}, self)

@@ -26,6 +26,9 @@ def get_parser():
     parser.add_argument(
         "--parts", "-p", type=int, help="Number of subparts to be prepared", default=0
     )
+    parser.add_argument(
+        "--original-order", action="store_true", help="If set, not sort utts by keys"
+    )
     return parser
 
 
@@ -48,7 +51,10 @@ if __name__ == "__main__":
 
     # load json and split keys
     j = json.load(codecs.open(args.json, "r", encoding="utf-8"))
-    utt_ids = sorted(list(j["utts"].keys()))
+    if args.original_order:
+        utt_ids = list(j["utts"].keys())
+    else:
+        utt_ids = sorted(list(j["utts"].keys()))
     logging.info("number of utterances = %d" % len(utt_ids))
     if len(utt_ids) < args.parts:
         logging.error("#utterances < #splits. Use smaller split number.")
@@ -64,7 +70,7 @@ if __name__ == "__main__":
             {"utts": new_dic},
             indent=4,
             ensure_ascii=False,
-            sort_keys=True,
+            sort_keys=not args.original_order,
             separators=(",", ": "),
         )
         fl = "{}/{}.{}.json".format(dirname, filename, i + 1)

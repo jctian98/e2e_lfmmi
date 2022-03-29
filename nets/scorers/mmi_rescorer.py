@@ -1,3 +1,4 @@
+import os
 import k2
 import torch
 from snowfall.training.mmi_graph import MmiTrainingGraphCompiler
@@ -6,7 +7,7 @@ from snowfall.training.mmi_graph import create_bigram_phone_lm
 from espnet.asr.asr_utils import parse_hypothesis
 
 class MMIRescorer(object):
-    def __init__(self, lang, device, idim, sos_id, rank, use_segment, char_list):
+    def __init__(self, lang, device, idim, sos_id, rank, use_segment, char_list, weight_path):
         
         self.lang = lang
         self.device = device
@@ -18,7 +19,7 @@ class MMIRescorer(object):
       
         self.lo = torch.nn.Linear(idim, len(self.phone_ids) + 1) 
         self.lm_scores = None
-        self.load_weight(rank)
+        self.load_weight(rank, weight_path)
 
         self.P = create_bigram_phone_lm(self.phone_ids)
         self.P.set_scores_stochastic_(self.lm_scores)
@@ -31,9 +32,10 @@ class MMIRescorer(object):
         else:
             self.bpe_space = ""
         
-    def load_weight(self, rank):
+    def load_weight(self, rank, path):
         # load lo weight and lm_scores
-        ckpt_dict = torch.load(self.lang / f"mmi_param.{rank}.pth")
+        ckpt_path = os.path.join(path, f"mmi_param.{rank}.pth")
+        ckpt_dict = torch.load(ckpt_path)
         for v in ckpt_dict.values():
             v.requires_grad=False
         self.lm_scores = ckpt_dict["lm_scores"]

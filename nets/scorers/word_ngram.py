@@ -85,19 +85,16 @@ class WordNgram():
         
         self.G = G.to(self.device)
 
-    def text2lat(self, text, gram_len=4):
+    def text2lat(self, text, gram_len=6):
         """
         Enumreate all possible paths that split text into word sequence. 
         Output will be a epsilon-free, acyclic lattice on self.device
         
-        text: string, without any ' '
+        text: list of token 
         ngram_len: the maximum length of each word gram, a.k.a, characters
         """
-
-        text = text.strip()
-        if len(text.split()) > 1:
-            raise ValueError("invalid text input. space is not allowd")
-
+        text = [tok.replace(" ", "") for tok in text] # exclude blank
+        
         if gram_len < 1:
             raise ValueError("invalid ngram_len. it should be larger than 1")
 
@@ -107,10 +104,10 @@ class WordNgram():
                 if len(text) - s - r < 0:
                     continue
                 
-                w = text[s: s + r]
+                w = "".join(text[s: s + r])
                 if w in self.symbol_table:
                     wid = self.symbol_table[w] 
-                elif len(w) == 1:
+                elif r == 1:
                     wid = self.oovid
                 else:
                     continue
@@ -165,6 +162,7 @@ class WordNgram():
         scored_lattice = self.score_lattice(lats, log_semiring)
         
         scores = scored_lattice._get_tot_scores(log_semiring, True)
+        
         return scores
 
     def draw(self, fsavec, prefix=None):
@@ -200,67 +198,26 @@ class WordNgramPartialScorer(PartialScorerInterface):
                 else:
                     self.token_list[idx] = tok.upper()
 
-        self.cache = {}
-    
     def init_state(self, x):
         return 0.0
 
-    # Old version. without cache mechanism
     def score_partial(self, y, next_tokens, state, x):
-        prefix = "".join([self.token_list[i] for i in y]) 
+        prefix = [self.token_list[i] for i in y] 
         next_tokens = [self.token_list[i] for i in next_tokens]
-        texts = [prefix + tok for tok in next_tokens]
+        texts = [prefix + [tok] for tok in next_tokens]
 
         scores = self.WordNgram.score_texts(texts, 
                      log_semiring=self.log_semiring)
         
         return scores - state, scores
     
-    # new version with cache: less computation overhead
-    def _score_partial(self, y, next_tokens, state, x):
-        # build the texts
-        aa = time.time()
-        prefix = "".join([self.token_list[i] for i in y])
-        next_tokens = [self.token_list[i] for i in next_tokens]
-        texts = [prefix + tok for tok in next_tokens]
-
-        # find the unseen texts
-        beam_size = len(next_tokens)
-        scores = [0.0] * beam_size
-        texts_partial, idx_partial = [], []
-        for i, text in enumerate(texts):
-            if text in self.cache:
-                scores[i] = self.cache[text]
-            else:
-                texts_partial.append(text)
-                idx_partial.append(i)
-
-        # score, cache and assign
-        if texts_partial:
-            scores_partial = self.WordNgram.score_texts(texts,
-                     log_semiring=self.log_semiring).cpu().tolist()
-            
-            for i, text, score in zip(idx_partial, 
-                                      texts_partial, 
-                                      scores_partial):
-                scores[i] = score
-                self.cache[text] = score
-      
-        # state is the prev_score 
-        step_scores = [s - state for s in scores]
-        return step_scores, scores
-
-    def clear_cache(self):
-        self.cache = {}
-
 if __name__ == "__main__":
-    device = torch.device("cuda:0")
+    device = torch.device("cpu") # cpu or cuda:0
     lang = sys.argv[1]
     word_ngram = WordNgram(lang, device)
 
-    # os.exit(0)
-    # texts = ["甚至出现交易停滞的情况", "甚至出现交易停滞的情形", "欲擒故纵", "欲擒故放"]
-    texts = ["哥哥宇智波鼬"]
+    texts = [["这", "件", "事", u"\u2581"+"INTEREST", "ING", u"\u2581"+"ALLOW" , "ED"]]
+    print(texts)
     for i in range(1):
         scores = word_ngram.score_texts(texts, log_semiring=True)
         print(scores)

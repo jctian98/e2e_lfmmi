@@ -11,7 +11,7 @@ import torch.nn as nn
 SUCCESS = 1
 STOP = 0
 
-def _copy_vec_to_param(vec, parameters):
+def _copy_vec_to_param(vec, parameters, is_grad=False):
     """Copy vector to the parameters
 
     Args:
@@ -29,7 +29,11 @@ def _copy_vec_to_param(vec, parameters):
         # The length of the parameter
         num_param = param.numel()
         # Slice the vector, reshape it, and replace the old data of the parameter
-        param.data = param.data.copy_(vec[pointer:pointer + num_param]
+        if is_grad: 
+            param.grad = param.grad.copy_(vec[pointer:pointer + num_param]
+                                      .view_as(param).data)
+        else:
+            param.data = param.data.copy_(vec[pointer:pointer + num_param]
                                       .view_as(param).data)
         # Increment the pointer
         pointer += num_param
@@ -132,74 +136,121 @@ class BlockAdamTrainer():
         block_lr (float): block learning rate
 
     """
-    def __init__(self, master_node, rank, world_size, model, block_lr):
+    def __init__(self, args, master_node, rank, world_size, model):
+        # Communication related
         self.master_node = master_node
         self.rank = rank
         self.world_size = world_size
-        self.model = model
-        self.block_lr = block_lr
         dist.init_process_group(backend="nccl", init_method="env://")
-        #clone() make sure self.param
-        #NOT tied to model parameters
-        #data() enforces no grad
-        param_vec = nn.utils.parameters_to_vector(model.parameters())
-        self.param = nn.parameter.Parameter(param_vec.data.clone())
-        #broadcast initial param to other nodes
-        dist.broadcast(tensor=self.param.data, src=master_node, async_op=False)
-        if self.rank == master_node:
-            self.optimizer = torch.optim.Adam([self.param], block_lr, weight_decay=0.0, betas=(0.9, 0.98), eps=1e-9)
+     
+        # Model and optimizer 
+        self.model = model
+        param_vec = nn.utils.parameters_to_vector(model.parameters()).data.clone() 
+        dist.broadcast(tensor=param_vec, src=master_node, async_op=False)
+        _copy_vec_to_param(param_vec, self.model.parameters())
+
+        from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
+        if hasattr(args, "enc_block_arch") or hasattr(args, "dec_block_arch"):
+            adim = model.most_dom_dim
         else:
-            _copy_vec_to_param(self.param.data, self.model.parameters())
+            adim = args.adim
+
+        # consider when some modules are freezed
+        params = [p for p in model.parameters() if p.requires_grad]
+        self.optimizer = get_std_opt(
+            params, adim, args.transformer_warmup_steps, args.transformer_lr
+        )
 
     def update_and_sync(self):
-        """Perform a single block sync and update
-           when the block size equals to batch size
-           we are doing sync adam
-        """
-        # print(f"{next(self.model.ctc.lo.named_parameters())}")
-        delta = self.param.data - \
-                nn.utils.parameters_to_vector(self.model.parameters()).data
-        #gather block gradients into delta
-        #op=ReduceOp.SUM,
-        dist.reduce(tensor=delta, dst=self.master_node)
-        #check if model params are still healthy
-        if torch.isnan(delta).sum().item():
-            return STOP
-        if self.rank == self.master_node:
-            #local rank is master node
-            #delta = delta / float(self.world_size)
-            #use delta.data to detach from computation graph
-            self.param.grad = delta.data
-            self.optimizer.step()
-        dist.broadcast(tensor=self.param.data, src=self.master_node, async_op=False)
-        _copy_vec_to_param(self.param.data, self.model.parameters())
+        # Before calling this function we assume the forward-backword has finished
+        # so the grad for params are non-zero.
+
+        params = [p for p in self.optimizer.param_groups[0]["params"] if hasattr(p.grad, "data")]
+        
+        # average gradients
+        grad_vec = nn.utils.parameters_to_vector([p.grad.data for p in params])
+        dist.all_reduce(tensor=grad_vec.data)
+        
+        # Update with the global gradients
+        _copy_vec_to_param(grad_vec, params, is_grad=True)
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
         return SUCCESS
 
-    def broadcast(self, tensor):
-        """broadcast interface for trainer"""
-        dist.broadcast(tensor=tensor, src=self.master_node, async_op=False)
+#class BlockAdamTrainer():
+#    """
+#    By tyrion: Does this trainer requires the local optimizer being
+#    SGD? which means the delta is still the gradients (scaled)
+#    The learning rate is scheduled by the local optimizer so 
+#    the block_lr should be set 1.0.
+#    This is essentially sync adam optimizer but
+#    allows each worker to have individual loader
+#    to improve the training efficiency, to replace
+#    replace DataParallel()
+#    Args:
+#        master_node (int): master node index, zero in most cases
+#        rank (int): local rank, eg, 0-7 if 8 GPUs are used
+#        world_size (int): total number of workers
+#        model (nn.module): torch model
+#        block_lr (float): block learning rate
+#    """
+#    def __init__(self, args, master_node, rank, world_size, model):
+#        self.master_node = master_node
+#        self.rank = rank
+#        self.world_size = world_size
+#        self.model = model
+#        dist.init_process_group(backend="nccl", init_method="env://")
+#        #clone() make sure self.param
+#        #NOT tied to model parameters
+#        #data() enforces no grad
+#        param_vec = nn.utils.parameters_to_vector(model.parameters())
+#        self.param = nn.parameter.Parameter(param_vec.data.clone())
+#        #broadcast initial param to other nodes
+#        dist.broadcast(tensor=self.param.data, src=master_node, async_op=False)
+#        if self.rank == master_node:
+#            from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
+#            if hasattr(args, "enc_block_arch") or hasattr(args, "dec_block_arch"):
+#                adim = model.most_dom_dim
+#            else:
+#                adim = args.adim
+#    
+#            # consider when some modules are freezed
+#            self.optimizer = get_std_opt(
+#                [self.param], adim, args.transformer_warmup_steps, args.transformer_lr
+#            )
+#        else:
+#            _copy_vec_to_param(self.param.data, self.model.parameters())
+#
+#    def update_and_sync(self):
+#        """Perform a single block sync and update
+#           when the block size equals to batch size
+#           we are doing sync adam
+#        """
+#        delta = self.param.data - \
+#                nn.utils.parameters_to_vector(self.model.parameters()).data
+#        #gather block gradients into delta
+#        #op=ReduceOp.SUM,
+#        dist.reduce(tensor=delta, dst=self.master_node)
+#        #check if model params are still healthy
+#        if torch.isnan(delta).sum().item():
+#            return STOP
+#        if self.rank == self.master_node:
+#            #local rank is master node
+#            #delta = delta / float(self.world_size)
+#            #use delta.data to detach from computation graph
+#            self.param.grad = delta.data
+#            self.optimizer.step()
+#        dist.broadcast(tensor=self.param.data, src=self.master_node, async_op=False)
+#        _copy_vec_to_param(self.param.data, self.model.parameters())
+#
+#        return SUCCESS
+#
+#    def reset_model(self, model):
+#        del self.param
+#        param_vec = nn.utils.parameters_to_vector(model.parameters())
+#        self.param = nn.parameter.Parameter(param_vec.data.clone())
 
-    def sum_reduce(self, tensor):
-        """sumreduce interface for trainer"""
-        #op=ReduceOp.SUM,
-        dist.reduce(tensor=tensor, dst=self.master_node)
-
-    def get_block_lr(self):
-        """get current learning rate"""
-        return self.block_lr
-
-    def set_block_lr(self, value):
-        """set a new learning rate"""
-        self.block_lr = value
-        if self.rank == self.master_node:
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = value
-
-    def reset_model(self, model):
-        del self.param
-        param_vec = nn.utils.parameters_to_vector(model.parameters())
-        self.param = nn.parameter.Parameter(param_vec.data.clone())
 
 class BmufAdamTrainer():
     """The implementation of BMUF-adam, check more detils in,

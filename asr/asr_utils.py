@@ -632,12 +632,19 @@ def _torch_snapshot_object(trainer, target, filename, savefun):
             model_state_dict = trainer.updater.model.module.state_dict()
         else:
             model_state_dict = trainer.updater.model.state_dict()
+    
+
     snapshot_dict = {
         "trainer": s.target,
         "model": model_state_dict,
-        #"optimizer": trainer.updater.get_optimizer("main").state_dict(),
-        "optimizer": trainer.updater.ddp_trainer.optimizer.state_dict(),
     }
+
+    if hasattr(trainer.updater, "ddp_trainer"):
+        # For ASR
+        snapshot_dict["optimizer"] = trainer.updater.ddp_trainer.optimizer.state_dict()
+    else:
+        # Others like LM
+        snapshot_dict["optimizer"] = trainer.updater.get_optimizer("main").state_dict() 
 
     # save snapshot dictionary
     fn = filename.format(trainer)
@@ -817,8 +824,8 @@ def torch_resume(snapshot_path, trainer, load_trainer_and_opt=True):
         else:
             trainer.updater.model.load_state_dict(snapshot_dict["model"])
 
-    # retore optimizer states
-    if load_trainer_and_opt:
+    # restore optimizer states
+    if load_trainer_and_opt and hasattr(trainer.updater.ddp_trainer, "optimizer"):
         trainer.updater.ddp_trainer.optimizer.load_state_dict(snapshot_dict["optimizer"])
 
     # delete opened snapshot
@@ -887,13 +894,17 @@ def add_results_to_json(js, nbest_hyps, char_list):
         out_dic["rec_token"] = rec_token
         out_dic["rec_tokenid"] = rec_tokenid
         out_dic["score"] = score
-        
+       
+        # RNNT MMI 
         if "mmi_tot_score" in hyp:
             out_dic["mmi_tot_score"] = hyp["mmi_tot_score"]
-        
+       
+        # LASCTC MMI 
         if "scores" in hyp:
             if "mmi_tot_score" in hyp["scores"]:
                 out_dic["mmi_tot_score"] = hyp["scores"]["mmi_tot_score"]
+            if "mmi" in hyp["scores"]:
+                out_dic["mmi"] = hyp["scores"]["mmi"]
 
         # add to list of N-best result dicts
         new_js["output"].append(out_dic)
