@@ -3,8 +3,8 @@ This is an E2E ASR toolkit modified from Espnet1 (version 0.9.9).
 
 This is the official implementation following papers:  
 [**Consistent Training and Decoding For End-to-end Speech Recognition Using Lattice-free MMI**](https://arxiv.org/abs/2112.02498) (Accepted by ICASSP 2022)  
-[**Improving Mandarin End-to-End Speech Recognition with Word N-gram Language Model**](https://arxiv.org/abs/2201.01995) (Accepted by SPL)  
-Integrate Lattice-Free MMI into End-to-End Speech Recognition (Submitted to TASLP) 
+[**Improving Mandarin End-to-End Speech Recognition with Word N-gram Language Model**](https://ieeexplore.ieee.org/document/9721084) (Accepted by SPL)  
+[**Integrate Lattice-Free MMI into End-to-End Speech Recognition**](https://arxiv.org/abs/2203.15614) (Submitted to TASLP) 
 
 
 We achieve state-of-the-art results on two of the most popular results in Aishell-1 and AIshell-2 Mandarin datasets.  
