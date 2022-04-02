@@ -1,5 +1,5 @@
 # End-to-end speech secognition toolkit
-This is an E2E ASR toolkit modified from Espnet1 (version 0.9.9). 
+This is an E2E ASR toolkit modified from Espnet1 (version 0.9.9).  
 If this repositry can help you, we will be appreciate if you can star it and cite our papers.
 
 This is the official implementation following papers:  
