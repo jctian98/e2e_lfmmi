@@ -100,6 +100,7 @@ k2-fsa: https://github.com/k2-fsa/k2
   journal={arXiv preprint arXiv:2112.02498},  
   year={2021}  
 }  
+
 @ARTICLE{9721084,
   author={Tian, Jinchuan and Yu, Jianwei and Weng, Chao and Zou, Yuexian and Yu, Dong},
   journal={IEEE Signal Processing Letters}, 
@@ -109,6 +110,13 @@ k2-fsa: https://github.com/k2-fsa/k2
   number={},
   pages={1-1},
   doi={10.1109/LSP.2022.3154241}}
+  
+@article{tian2022integrate,
+  title={Integrate Lattice-Free MMI into End-to-End Speech Recognition},
+  author={Tian, Jinchuan and Yu, Jianwei and Weng, Chao and Zou, Yuexian and Yu, Dong},
+  journal={arXiv preprint arXiv:2203.15614},
+  year={2022}
+}
 ```
 ### Authorship
 Jinchuan Tian;  tianjinchuan@stu.pku.edu.cn or tyriontian@tencent.com  
