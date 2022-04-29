@@ -95,12 +95,15 @@ Espent: https://github.com/espnet/espnet
 k2-fsa: https://github.com/k2-fsa/k2  
 ### Citations
 ```
-@article{tian2021consistent,  
-  title={Consistent Training and Decoding For End-to-end Speech Recognition Using Lattice-free MMI},  
-  author={Tian, Jinchuan and Yu, Jianwei and Weng, Chao and Zhang, Shi-Xiong and Su, Dan and Yu, Dong and Zou, Yuexian},  
-  journal={arXiv preprint arXiv:2112.02498},  
-  year={2021}  
-}  
+@INPROCEEDINGS{9746579,
+  author={Tian, Jinchuan and Yu, Jianwei and Weng, Chao and Zhang, Shi-Xiong and Su, Dan and Yu, Dong and Zou, Yuexian},
+  booktitle={ICASSP 2022 - 2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, 
+  title={Consistent Training and Decoding for End-to-End Speech Recognition Using Lattice-Free MMI}, 
+  year={2022},
+  volume={},
+  number={},
+  pages={7782-7786},
+  doi={10.1109/ICASSP43922.2022.9746579}}
 
 @ARTICLE{9721084,
   author={Tian, Jinchuan and Yu, Jianwei and Weng, Chao and Zou, Yuexian and Yu, Dong},
